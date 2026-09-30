@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Bestanden in de repository tonen
+        run: find . -not -path './.git/*' -type f | sort
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -24,19 +27,25 @@ jobs:
           gradle-version: '8.9'
 
       - name: APK bouwen
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: |
+          INST=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
+          if [ -z "$INST" ]; then
+            echo "FOUT: settings.gradle.kts niet gevonden. Upload de volledige inhoud van de zip."
+            exit 1
+          fi
+          cd "$(dirname "$INST")"
+          echo "Project gevonden in: $(pwd)"
+          gradle assembleRelease --no-daemon --stacktrace
 
-      - name: APK hernoemen
-        run: cp app/build/outputs/apk/release/app-release.apk TVGids.apk
+      - name: APK klaarzetten
+        run: cp "$(find . -name app-release.apk | head -1)" TVGids.apk
 
-      - name: APK bewaren als artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: TVGids-apk
           path: TVGids.apk
 
-      - name: APK publiceren als release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: TV Gids (laatste build)
