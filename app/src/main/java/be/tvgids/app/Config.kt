@@ -28,10 +28,10 @@ object Config {
      * een bestand dat je zelf met iptv-org/epg genereert.
      */
     val EPG_BRONNEN: List<String> = listOf(
-        "https://raw.githubusercontent.com/globetvapp/epg/main/Belgium/belgium1.xml",
-        "https://raw.githubusercontent.com/globetvapp/epg/main/Belgium/belgium2.xml",
-        "https://raw.githubusercontent.com/globetvapp/epg/main/Netherlands/netherlands1.xml",
-        "https://raw.githubusercontent.com/globetvapp/epg/main/Netherlands/netherlands2.xml",
+        "https://www.open-epg.com/files/belgium1.xml",
+        "https://www.open-epg.com/files/belgium2.xml",
+        "https://www.open-epg.com/files/netherlands1.xml",
+        "https://www.open-epg.com/files/netherlands2.xml",
     )
 
     // Pakketnamen: controleer ze op je Streamer met
@@ -50,21 +50,16 @@ object Config {
         ZenderDef("vtm3", "VTM 3", Land.BE, 0xFF5CC8A8, listOf("VTM 3", "Vitaya"), "VTM GO", VTM_GO),
         ZenderDef("vtm4", "VTM 4", Land.BE, 0xFFF08A3C, listOf("VTM 4", "CAZ"), "VTM GO", VTM_GO),
         ZenderDef("vtmgold", "VTM GOLD", Land.BE, 0xFFD4AF37, listOf("VTM GOLD"), "VTM GO", VTM_GO),
-        ZenderDef("play4", "Play4", Land.BE, 0xFF2EC4D6, listOf("Play4", "Play 4", "VIER")),
-        ZenderDef("play5", "Play5", Land.BE, 0xFF2EC4D6, listOf("Play5", "Play 5", "VIJF")),
-        ZenderDef("play6", "Play6", Land.BE, 0xFF2EC4D6, listOf("Play6", "Play 6", "ZES")),
-        ZenderDef("play7", "Play7", Land.BE, 0xFF2EC4D6, listOf("Play7", "Play 7")),
+        // Play-zenders (sinds de nieuwe namen: Play4 werd Play, enz.)
+        ZenderDef("play", "Play", Land.BE, 0xFF2EC4D6, listOf("Play", "Play4", "Play 4", "VIER")),
+        ZenderDef("playfictie", "Play Fictie", Land.BE, 0xFF2EC4D6, listOf("Play Fictie")),
+        ZenderDef("playactie", "Play Actie", Land.BE, 0xFF2EC4D6, listOf("Play Actie")),
+        ZenderDef("playcrime", "Play Crime", Land.BE, 0xFF2EC4D6, listOf("Play Crime")),
+        ZenderDef("playreality", "Play Reality", Land.BE, 0xFF2EC4D6, listOf("Play Reality")),
         // Nederland (NPO)
         ZenderDef("npo1", "NPO 1", Land.NL, 0xFFFF7A1A, listOf("NPO 1", "Nederland 1"), "NPO Start", NPO_START),
         ZenderDef("npo2", "NPO 2", Land.NL, 0xFFFF7A1A, listOf("NPO 2", "Nederland 2"), "NPO Start", NPO_START),
         ZenderDef("npo3", "NPO 3", Land.NL, 0xFFFF7A1A, listOf("NPO 3", "Nederland 3"), "NPO Start", NPO_START),
-        ZenderDef("npo1extra", "NPO 1 Extra", Land.NL, 0xFFB35A1F, listOf("NPO 1 Extra"), "NPO Start", NPO_START),
-        ZenderDef("npo2extra", "NPO 2 Extra", Land.NL, 0xFFB35A1F, listOf("NPO 2 Extra"), "NPO Start", NPO_START),
-        ZenderDef(
-            "npopn", "NPO Politiek en Nieuws", Land.NL, 0xFFB35A1F,
-            listOf("NPO Politiek en Nieuws", "NPO Politiek & Nieuws", "NPO Politiek", "NPO Nieuws"),
-            "NPO Start", NPO_START,
-        ),
     )
 }
 

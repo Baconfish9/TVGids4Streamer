@@ -26,6 +26,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,9 +36,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +50,11 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -54,10 +65,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -140,21 +153,102 @@ fun GidsScherm(
     val scrollGeanimeerd by animateFloatAsState(scrollMin, animationSpec = tween(220), label = "scroll")
     val pxPerMin = with(LocalDensity.current) { DP_PER_MIN.toPx() }
 
-    val focusNu = remember { FocusRequester() }
     val focusKnop = remember { FocusRequester() }
-    val eersteLiveKey = remember(res, zenders) {
-        val t = System.currentTimeMillis()
-        zenders.firstOrNull { z ->
-            res?.programmas?.get(z.key)?.any { it.start <= t && it.stop > t } == true
-        }?.key
+    val lijst = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    // Programma's per zender die binnen het raster vallen (zelfde volgorde als de rijen).
+    val perRij = remember(res, rasterStart, zenders) {
+        zenders.map { z ->
+            res?.programmas?.get(z.key).orEmpty().filter { it.stop > rasterStart && it.start < rasterEind }
+        }
     }
-    LaunchedEffect(eersteLiveKey) {
+
+    // Het programma dat de focus moet krijgen. Elke verhoging van focusVerzoek
+    // vraagt het bijhorende blok om de focus (opnieuw) te nemen.
+    var doel by remember { mutableStateOf<Programma?>(null) }
+    var focusVerzoek by remember { mutableIntStateOf(0) }
+    // Tijdstip waarrond omhoog/omlaag een programma gezocht wordt, zodat je
+    // bij verticaal bladeren niet stilaan naar links of rechts afdrijft.
+    var ankerTijd by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var ankerVast by remember { mutableStateOf(false) }
+
+    fun geefFocus(p: Programma) {
+        doel = p
+        focusVerzoek++
+    }
+
+    val eersteLive = remember(perRij) {
+        val t = System.currentTimeMillis()
+        perRij.firstNotNullOfOrNull { rij -> rij.firstOrNull { it.start <= t && it.stop > t } }
+    }
+    LaunchedEffect(eersteLive) {
         delay(150)
-        if (eersteLiveKey != null) {
-            runCatching { focusNu.requestFocus() }
+        if (eersteLive != null) {
+            ankerTijd = System.currentTimeMillis()
+            ankerVast = true
+            geefFocus(eersteLive)
         } else {
             runCatching { focusKnop.requestFocus() }
         }
+    }
+
+    // Zorgt dat rij `index` volledig in beeld staat (en dus opgebouwd is).
+    fun toonRij(index: Int) {
+        val info = lijst.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+        scope.launch {
+            when {
+                item == null -> {
+                    val eerste = info.visibleItemsInfo.firstOrNull()?.index ?: 0
+                    val aantal = max(1, info.visibleItemsInfo.size - 1)
+                    lijst.scrollToItem(if (index < eerste) index else max(0, index - aantal + 1))
+                }
+                item.offset < 0 -> lijst.animateScrollToItem(index)
+                item.offset + item.size > info.viewportEndOffset ->
+                    lijst.animateScrollBy((item.offset + item.size - info.viewportEndOffset).toFloat())
+            }
+        }
+    }
+
+    // Heel korte opvullers (Keno, Lotto, ...) zijn amper zichtbaar; die slaan we
+    // over bij het navigeren, behalve het blok waar de focus nu op staat.
+    fun navigeerbaar(rij: List<Programma>, huidig: Programma?): List<Programma> =
+        rij.filter { it == huidig || it.stop - it.start >= 5 * MIN }.ifEmpty { rij }
+
+    // Kiest het programma in een rij dat het ankertijdstip bevat, of anders het dichtstbijzijnde.
+    fun rondAnker(alles: List<Programma>): Programma? {
+        val rij = navigeerbaar(alles, null)
+        return rij.firstOrNull { it.start <= ankerTijd && it.stop > ankerTijd }
+            ?: rij.minByOrNull { min(abs(it.start - ankerTijd), abs(it.stop - ankerTijd)) }
+    }
+
+    // Afhandeling van de pijltjestoetsen binnen het raster. Geeft false terug als
+    // de standaard-focusnavigatie het mag overnemen (omhoog vanuit de bovenste rij).
+    fun navigeer(key: Key): Boolean {
+        val p = gefocust ?: return false
+        val rij = zenders.indexOfFirst { it.key == p.zenderKey }
+        if (rij < 0) return false
+        when (key) {
+            Key.DirectionLeft, Key.DirectionRight -> {
+                val progs = navigeerbaar(perRij[rij], p)
+                val i = progs.indexOf(p)
+                val nieuw = progs.getOrNull(if (key == Key.DirectionLeft) i - 1 else i + 1) ?: return true
+                geefFocus(nieuw)
+            }
+            Key.DirectionUp, Key.DirectionDown -> {
+                val stap = if (key == Key.DirectionUp) -1 else 1
+                var r = rij + stap
+                while (r in perRij.indices && perRij[r].isEmpty()) r += stap
+                if (r !in perRij.indices) return key == Key.DirectionDown
+                val nieuw = rondAnker(perRij[r]) ?: return true
+                ankerVast = true
+                toonRij(r)
+                geefFocus(nieuw)
+            }
+            else -> return false
+        }
+        return true
     }
 
     Column(
@@ -162,7 +256,18 @@ fun GidsScherm(
             .fillMaxSize()
             .padding(start = 40.dp, end = 40.dp, top = 22.dp, bottom = 16.dp)
     ) {
-        Kop(nu, state, focusKnop, onVernieuw, onFilter, onStatus)
+        Kop(
+            nu, state, focusKnop, onVernieuw, onFilter, onStatus,
+            onNaarRaster = {
+                val d = doel
+                if (d != null && perRij.any { d in it }) {
+                    focusVerzoek++
+                    true
+                } else {
+                    false
+                }
+            },
+        )
         Spacer(Modifier.height(12.dp))
         InfoPaneel(gefocust, nu, state)
         Spacer(Modifier.height(10.dp))
@@ -218,22 +323,37 @@ fun GidsScherm(
                 }
 
                 // Zenders met programma's, plus de rode "nu"-lijn eroverheen
-                Box(Modifier.fillMaxWidth().weight(1f)) {
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        items(zenders, key = { it.key }) { z ->
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .onPreviewKeyEvent { e ->
+                            e.type == KeyEventType.KeyDown && navigeer(e.key)
+                        }
+                ) {
+                    LazyColumn(Modifier.fillMaxSize(), state = lijst) {
+                        itemsIndexed(zenders, key = { _, z -> z.key }) { i, z ->
                             ZenderRij(
                                 zender = z,
-                                programmas = res?.programmas?.get(z.key).orEmpty(),
+                                zichtbaar = perRij[i],
                                 rasterStart = rasterStart,
                                 rasterEind = rasterEind,
                                 nu = nu,
                                 pxPerMin = pxPerMin,
                                 scroll = { scrollGeanimeerd },
-                                focusRequester = if (z.key == eersteLiveKey) focusNu else null,
+                                doel = doel,
+                                focusVerzoek = focusVerzoek,
                                 laden = state.laden && res == null,
                                 onFocus = { p ->
                                     gefocust = p
+                                    doel = p
                                     volg(p)
+                                    if (ankerVast) {
+                                        ankerVast = false
+                                    } else {
+                                        val beeldStart = rasterStart + (scrollMin * MIN).toLong()
+                                        ankerTijd = max(p.start, min(beeldStart, p.stop - 1))
+                                    }
                                 },
                                 onKlik = { p -> detail = p },
                             )
@@ -261,8 +381,12 @@ fun GidsScherm(
 
     val d = detail
     if (d != null) {
-        Dialog(onDismissRequest = { detail = null }) {
-            DetailKaart(d, nu, onSluit = { detail = null })
+        val sluit: () -> Unit = {
+            detail = null
+            focusVerzoek++
+        }
+        Dialog(onDismissRequest = sluit) {
+            DetailKaart(d, nu, onSluit = sluit)
         }
     }
 }
@@ -279,8 +403,16 @@ private fun Kop(
     onVernieuw: () -> Unit,
     onFilter: (Land?) -> Unit,
     onStatus: () -> Unit,
+    onNaarRaster: () -> Boolean,
 ) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .onPreviewKeyEvent { e ->
+                e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown && onNaarRaster()
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(uurMin(nu), color = Kleuren.tekst, fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.width(16.dp))
         Text(datumLang(nu), color = Kleuren.tekstZacht, fontSize = 17.sp)
@@ -357,20 +489,18 @@ private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState) {
 @Composable
 private fun ZenderRij(
     zender: ZenderDef,
-    programmas: List<Programma>,
+    zichtbaar: List<Programma>,
     rasterStart: Long,
     rasterEind: Long,
     nu: Long,
     pxPerMin: Float,
     scroll: () -> Float,
-    focusRequester: FocusRequester?,
+    doel: Programma?,
+    focusVerzoek: Int,
     laden: Boolean,
     onFocus: (Programma) -> Unit,
     onKlik: (Programma) -> Unit,
 ) {
-    val zichtbaar = remember(programmas, rasterStart) {
-        programmas.filter { it.stop > rasterStart && it.start < rasterEind }
-    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -398,11 +528,10 @@ private fun ZenderRij(
                         key(p.start) {
                             val s = max(p.start, rasterStart)
                             val e = min(p.stop, rasterEind)
-                            val isLive = nu >= p.start && nu < p.stop
                             ProgrammaBlok(
                                 p = p,
                                 nu = nu,
-                                focusRequester = if (isLive) focusRequester else null,
+                                focusVerzoek = if (p == doel) focusVerzoek else -1,
                                 onFocus = { onFocus(p) },
                                 onKlik = { onKlik(p) },
                                 modifier = Modifier
@@ -455,12 +584,16 @@ private fun ZenderLabel(z: ZenderDef) {
 private fun ProgrammaBlok(
     p: Programma,
     nu: Long,
-    focusRequester: FocusRequester?,
+    focusVerzoek: Int,
     onFocus: () -> Unit,
     onKlik: () -> Unit,
     modifier: Modifier,
 ) {
     var focus by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(focusVerzoek) {
+        if (focusVerzoek >= 0) runCatching { focusRequester.requestFocus() }
+    }
     val live = nu >= p.start && nu < p.stop
     val voorbij = p.stop <= nu
     val achtergrond = when {
@@ -474,10 +607,9 @@ private fun ProgrammaBlok(
         voorbij -> Kleuren.tekstZacht
         else -> Kleuren.tekst
     }
-    val fr = if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
     Box(
         modifier
-            .then(fr)
+            .focusRequester(focusRequester)
             .onFocusChanged {
                 focus = it.isFocused
                 if (it.isFocused) onFocus()
