@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.TVGids" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/achtergrond</item>
+        <item name="android:colorBackground">@color/achtergrond</item>
+    </style>
+    <color name="achtergrond">#0F1622</color>
+</resources>
