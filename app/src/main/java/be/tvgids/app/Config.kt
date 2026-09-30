@@ -80,6 +80,13 @@ fun normaliseer(invoer: String): String {
         .lowercase()
         .replace("&", "en")
         .replace(Regex("[^a-z0-9]"), "")
+    for (v in listOf("be", "vl", "nl")) {
+        if (n.startsWith(v) && n.length > v.length + 2) {
+            val rest = n.substring(v.length)
+            // alleen als het restant zelf een gekende zendernaam kan zijn
+            if (rest.first().isLetter()) n = rest
+        }
+    }
     var veranderd = true
     while (veranderd) {
         veranderd = false

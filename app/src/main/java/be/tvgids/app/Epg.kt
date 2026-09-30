@@ -47,6 +47,27 @@ data class EpgResultaat(
     val opgehaald: Long,
 )
 
+/** Wat er in één bron gevonden werd, voor het statusscherm. */
+class ParseInfo {
+    var zenders = 0
+    var gekoppeld = 0
+    var programmas = 0
+    var voorGekoppeld = 0
+    var inVenster = 0
+    var vroegste = Long.MAX_VALUE
+    var laatste = Long.MIN_VALUE
+}
+
+private val FMT_KORT = DateTimeFormatter.ofPattern("dd/MM HH:mm")
+private fun kort(ms: Long): String =
+    java.time.Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(FMT_KORT)
+
+fun ParseInfo.samenvatting(): String {
+    val periode = if (programmas > 0) " Gegevens van ${kort(vroegste)} tot ${kort(laatste)}." else ""
+    return "$gekoppeld van $zenders zenders gekoppeld. $programmas programma's in bron, " +
+        "$voorGekoppeld voor onze zenders, waarvan $inVenster in de komende dag.$periode"
+}
+
 // ---------------------------------------------------------------------------
 // XMLTV-parser (streaming, zodat grote bestanden geen geheugenproblemen geven)
 // ---------------------------------------------------------------------------
@@ -70,7 +91,6 @@ object XmltvParser {
         }
     }
 
-    /** @return het aantal zenders uit deze bron dat gekoppeld werd. */
     fun parse(
         input: InputStream,
         koppel: (String, List<String>) -> String?,
@@ -78,7 +98,8 @@ object XmltvParser {
         tot: Long,
         uit: MutableMap<String, MutableMap<Long, Programma>>,
         nietGekoppeld: MutableSet<String>,
-    ): Int {
+    ): ParseInfo {
+        val info = ParseInfo()
         val parser = Xml.newPullParser()
         parser.setInput(input, null)
         val idNaarKey = HashMap<String, String>()
@@ -86,13 +107,14 @@ object XmltvParser {
         while (event != XmlPullParser.END_DOCUMENT) {
             if (event == XmlPullParser.START_TAG) {
                 when (parser.name) {
-                    "channel" -> leesZender(parser, koppel, idNaarKey, nietGekoppeld)
-                    "programme" -> leesProgramma(parser, idNaarKey, vanaf, tot, uit)
+                    "channel" -> leesZender(parser, koppel, idNaarKey, nietGekoppeld, info)
+                    "programme" -> leesProgramma(parser, idNaarKey, vanaf, tot, uit, info)
                 }
             }
             event = parser.next()
         }
-        return idNaarKey.values.toSet().size
+        info.gekoppeld = idNaarKey.size
+        return info
     }
 
     private fun leesZender(
@@ -100,7 +122,9 @@ object XmltvParser {
         koppel: (String, List<String>) -> String?,
         idNaarKey: MutableMap<String, String>,
         nietGekoppeld: MutableSet<String>,
+        info: ParseInfo,
     ) {
+        info.zenders++
         val id = p.getAttributeValue(null, "id") ?: ""
         val namen = ArrayList<String>()
         val diepte = p.depth
@@ -127,18 +151,26 @@ object XmltvParser {
         vanaf: Long,
         tot: Long,
         uit: MutableMap<String, MutableMap<Long, Programma>>,
+        info: ParseInfo,
     ) {
+        info.programmas++
         val key = idNaarKey[p.getAttributeValue(null, "channel") ?: ""]
         val start = parseTijd(p.getAttributeValue(null, "start"))
+        if (start != null) {
+            if (start < info.vroegste) info.vroegste = start
+            if (start > info.laatste) info.laatste = start
+        }
         if (key == null || start == null) {
             sla(p)
             return
         }
+        info.voorGekoppeld++
         val stop = parseTijd(p.getAttributeValue(null, "stop")) ?: (start + 30 * MIN)
         if (stop <= vanaf || start >= tot) {
             sla(p)
             return
         }
+        info.inVenster++
         var titel: String? = null
         var sub: String? = null
         var desc: String? = null
@@ -233,8 +265,8 @@ class EpgRepository(context: Context) {
         for (url in Config.EPG_BRONNEN) {
             try {
                 open(url).use { ins ->
-                    val aantal = XmltvParser.parse(ins, this@EpgRepository::koppel, vanaf, tot, verzameld, niet)
-                    statussen.add(BronStatus(url, true, "$aantal zender(s) gekoppeld"))
+                    val info = XmltvParser.parse(ins, this@EpgRepository::koppel, vanaf, tot, verzameld, niet)
+                    statussen.add(BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, info.samenvatting()))
                 }
             } catch (e: Exception) {
                 statussen.add(BronStatus(url, false, e.message ?: e.javaClass.simpleName))

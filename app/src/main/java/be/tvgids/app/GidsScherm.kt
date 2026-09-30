@@ -129,9 +129,8 @@ fun GidsScherm(
     val rasterStart = remember(res?.opgehaald) { halfUurOmlaag(System.currentTimeMillis() - 2 * UUR) }
     val rasterEind = rasterStart + RASTER_UREN * UUR
     val totaalMin = (RASTER_UREN * 60).toFloat()
-    val zenders = remember(state.filter) {
-        Config.ZENDERS.filter { state.filter == null || it.land == state.filter }
-    }
+    // Alle zenders in één lijst: eerst de Vlaamse, dan de Nederlandse.
+    val zenders = remember { Config.ZENDERS.sortedBy { it.land.ordinal } }
 
     var gefocust by remember { mutableStateOf<Programma?>(null) }
     var detail by remember { mutableStateOf<Programma?>(null) }
@@ -149,7 +148,7 @@ fun GidsScherm(
             res?.programmas?.get(z.key)?.any { it.start <= t && it.stop > t } == true
         }?.key
     }
-    LaunchedEffect(eersteLiveKey, state.filter) {
+    LaunchedEffect(eersteLiveKey) {
         delay(150)
         if (eersteLiveKey != null) {
             runCatching { focusNu.requestFocus() }
@@ -286,10 +285,6 @@ private fun Kop(
         Spacer(Modifier.width(16.dp))
         Text(datumLang(nu), color = Kleuren.tekstZacht, fontSize = 17.sp)
         Spacer(Modifier.weight(1f))
-        TvKnop("Alle zenders", actief = state.filter == null) { onFilter(null) }
-        TvKnop("Vlaams", actief = state.filter == Land.BE) { onFilter(Land.BE) }
-        TvKnop("Nederlands", actief = state.filter == Land.NL) { onFilter(Land.NL) }
-        Spacer(Modifier.width(20.dp))
         TvKnop(
             if (state.laden) "Bezig met laden" else "Vernieuwen",
             modifier = Modifier.focusRequester(focusKnop),
@@ -721,13 +716,13 @@ private fun Regel(titel: String, detail: String, detailKleur: Color) {
             titel,
             color = Kleuren.tekst,
             fontSize = 15.sp,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
+            modifier = Modifier.weight(0.45f),
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
         if (detail.isNotEmpty()) {
             Spacer(Modifier.width(16.dp))
-            Text(detail, color = detailKleur, fontSize = 15.sp)
+            Text(detail, color = detailKleur, fontSize = 15.sp, modifier = Modifier.weight(0.55f))
         }
     }
 }
