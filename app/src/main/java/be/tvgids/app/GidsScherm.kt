@@ -66,6 +66,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -105,6 +107,8 @@ private val TIJDBALK_HOOGTE = 30.dp
 private const val RASTER_UREN = 30
 /** Minimale breedte die de meeschuivende titel aan het einde van een blok houdt. */
 private val TEKST_MIN_BREEDTE = 60.dp
+/** Wie langer dan dit in een andere app zat, komt terug bij "nu" in plaats van op de oude plek. */
+private const val TERUGZETTEN_NA = 5 * MIN
 
 private val NL_BE: Locale = Locale.forLanguageTag("nl-BE")
 private val FMT_UUR = DateTimeFormatter.ofPattern("HH:mm")
@@ -190,6 +194,27 @@ fun GidsScherm(
     var rasterFocus by remember { mutableStateOf(false) }
     // Of de focus sinds het openen van dit scherm al eens geplaatst werd.
     var geplaatst by remember { mutableStateOf(false) }
+    // Wanneer de app naar de achtergrond ging, en een teller die de plaatsing
+    // opnieuw laat lopen als je na een tijd terugkeert.
+    var wegSinds by rememberSaveable { mutableLongStateOf(0L) }
+    var terugkeer by remember { mutableIntStateOf(0) }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        wegSinds = System.currentTimeMillis()
+    }
+    // Lang weg geweest (bv. een programma bekeken): terug naar "nu" op dezelfde zender.
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        val t = System.currentTimeMillis()
+        if (wegSinds > 0 && t - wegSinds >= TERUGZETTEN_NA) {
+            detail = null
+            ankerTijd = t
+            doelStart = 0L
+            beeldMin = max(0f, (t - oorsprong) / MIN.toFloat() - 30f)
+            geplaatst = false
+            terugkeer++
+        }
+        wegSinds = 0L
+    }
 
     fun geefFocus(p: Programma) {
         doel = p
@@ -228,7 +253,7 @@ fun GidsScherm(
 
     // Bij nieuwe gegevens (eerste keer, na een verversing of terug van het
     // statusscherm) het vorige programma terugzoeken; anders het eerste live-programma.
-    LaunchedEffect(perRij) {
+    LaunchedEffect(perRij, terugkeer) {
         delay(150)
         val t = System.currentTimeMillis()
         val rijIndex = zenders.indexOfFirst { it.key == doelZender }
