@@ -58,9 +58,12 @@ class ParseInfo {
     var laatste = Long.MIN_VALUE
 }
 
+/** Tijdzone van de gids; los van de toestelinstelling (een emulator staat vaak op UTC). */
+val BRUSSEL: ZoneId = ZoneId.of("Europe/Brussels")
+
 private val FMT_KORT = DateTimeFormatter.ofPattern("dd/MM HH:mm")
 private fun kort(ms: Long): String =
-    java.time.Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(FMT_KORT)
+    java.time.Instant.ofEpochMilli(ms).atZone(BRUSSEL).format(FMT_KORT)
 
 fun ParseInfo.samenvatting(): String {
     val periode = if (programmas > 0) " Gegevens van ${kort(vroegste)} tot ${kort(laatste)}." else ""
@@ -75,7 +78,6 @@ fun ParseInfo.samenvatting(): String {
 object XmltvParser {
 
     private val BASIS = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-    private val BRUSSEL: ZoneId = ZoneId.of("Europe/Brussels")
 
     /** XMLTV-tijd zoals "20260930203000 +0200" naar epoch-milliseconden. */
     fun parseTijd(s: String?): Long? {
