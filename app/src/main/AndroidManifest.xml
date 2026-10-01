@@ -12,6 +12,7 @@
         <package android:name="be.vrt.vrtnu" />
         <package android:name="be.vmma.vtm.zenderapp" />
         <package android:name="nl.uitzendinggemist" />
+        <package android:name="be.goplay.app" />
     </queries>
 
     <application

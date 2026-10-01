@@ -35,10 +35,11 @@ object Config {
     )
 
     // Pakketnamen: controleer ze op je Streamer met
-    //   adb shell pm list packages | grep -i -E "vrt|vtm|npo|uitzending"
+    //   adb shell pm list packages | grep -i -E "vrt|vtm|npo|uitzending|goplay"
     private const val VRT_MAX = "be.vrt.vrtnu"
     private const val VTM_GO = "be.vmma.vtm.zenderapp"
     private const val NPO_START = "nl.uitzendinggemist"
+    private const val PLAY = "be.goplay.app"
 
     val ZENDERS: List<ZenderDef> = listOf(
         // Vlaanderen
@@ -51,11 +52,11 @@ object Config {
         ZenderDef("vtm4", "VTM 4", Land.BE, 0xFFF08A3C, listOf("VTM 4", "CAZ"), "VTM GO", VTM_GO),
         ZenderDef("vtmgold", "VTM GOLD", Land.BE, 0xFFD4AF37, listOf("VTM GOLD"), "VTM GO", VTM_GO),
         // Play-zenders (sinds de nieuwe namen: Play4 werd Play, enz.)
-        ZenderDef("play", "Play", Land.BE, 0xFF2EC4D6, listOf("Play", "Play4", "Play 4", "VIER")),
-        ZenderDef("playfictie", "Play Fictie", Land.BE, 0xFF2EC4D6, listOf("Play Fictie")),
-        ZenderDef("playactie", "Play Actie", Land.BE, 0xFF2EC4D6, listOf("Play Actie")),
-        ZenderDef("playcrime", "Play Crime", Land.BE, 0xFF2EC4D6, listOf("Play Crime")),
-        ZenderDef("playreality", "Play Reality", Land.BE, 0xFF2EC4D6, listOf("Play Reality")),
+        ZenderDef("play", "Play", Land.BE, 0xFF2EC4D6, listOf("Play", "Play4", "Play 4", "VIER"), "Play", PLAY),
+        ZenderDef("playfictie", "Play Fictie", Land.BE, 0xFF2EC4D6, listOf("Play Fictie"), "Play", PLAY),
+        ZenderDef("playactie", "Play Actie", Land.BE, 0xFF2EC4D6, listOf("Play Actie"), "Play", PLAY),
+        ZenderDef("playcrime", "Play Crime", Land.BE, 0xFF2EC4D6, listOf("Play Crime"), "Play", PLAY),
+        ZenderDef("playreality", "Play Reality", Land.BE, 0xFF2EC4D6, listOf("Play Reality"), "Play", PLAY),
         // Nederland (NPO)
         ZenderDef("npo1", "NPO 1", Land.NL, 0xFFFF7A1A, listOf("NPO 1", "Nederland 1"), "NPO Start", NPO_START),
         ZenderDef("npo2", "NPO 2", Land.NL, 0xFFFF7A1A, listOf("NPO 2", "Nederland 2"), "NPO Start", NPO_START),

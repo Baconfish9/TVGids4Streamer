@@ -55,6 +55,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -101,13 +102,15 @@ private val RIJ_HOOGTE = 58.dp
 private val ZENDER_BREEDTE = 170.dp
 private val TIJDBALK_HOOGTE = 30.dp
 private const val RASTER_UREN = 30
+/** Minimale breedte die de meeschuivende titel aan het einde van een blok houdt. */
+private val TEKST_MIN_BREEDTE = 60.dp
 
 private val NL_BE: Locale = Locale.forLanguageTag("nl-BE")
 private val FMT_UUR = DateTimeFormatter.ofPattern("HH:mm")
 private val FMT_DAG = DateTimeFormatter.ofPattern("EEE d MMM", NL_BE)
 private val FMT_DATUM = DateTimeFormatter.ofPattern("EEEE d MMMM", NL_BE)
 
-private fun zone(): ZoneId = ZoneId.systemDefault()
+private fun zone(): ZoneId = BRUSSEL
 fun uurMin(ms: Long): String = Instant.ofEpochMilli(ms).atZone(zone()).format(FMT_UUR)
 private fun datumLang(ms: Long): String =
     Instant.ofEpochMilli(ms).atZone(zone()).format(FMT_DATUM).replaceFirstChar { it.uppercase() }
@@ -528,14 +531,18 @@ private fun ZenderRij(
                         key(p.start) {
                             val s = max(p.start, rasterStart)
                             val e = min(p.stop, rasterEind)
+                            val startMin = (s - rasterStart) / MIN.toFloat()
                             ProgrammaBlok(
                                 p = p,
                                 nu = nu,
+                                startMin = startMin,
+                                pxPerMin = pxPerMin,
+                                scroll = scroll,
                                 focusVerzoek = if (p == doel) focusVerzoek else -1,
                                 onFocus = { onFocus(p) },
                                 onKlik = { onKlik(p) },
                                 modifier = Modifier
-                                    .offset(x = DP_PER_MIN * ((s - rasterStart) / MIN.toFloat()))
+                                    .offset(x = DP_PER_MIN * startMin)
                                     .width(DP_PER_MIN * ((e - s) / MIN.toFloat()))
                                     .fillMaxHeight()
                                     .padding(horizontal = 2.dp),
@@ -584,6 +591,9 @@ private fun ZenderLabel(z: ZenderDef) {
 private fun ProgrammaBlok(
     p: Programma,
     nu: Long,
+    startMin: Float,
+    pxPerMin: Float,
+    scroll: () -> Float,
     focusVerzoek: Int,
     onFocus: () -> Unit,
     onKlik: () -> Unit,
@@ -633,7 +643,20 @@ private fun ProgrammaBlok(
                     .background(Kleuren.nuLijn)
             )
         }
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Column(
+            Modifier
+                // Titel en uur schuiven mee met de linkerrand van het beeld, zodat
+                // ze ook zichtbaar blijven bij een programma dat al lang bezig is.
+                .layout { measurable, constraints ->
+                    val maxVerschuif = max(0, constraints.maxWidth - TEKST_MIN_BREEDTE.roundToPx())
+                    val verschuif = ((scroll() - startMin) * pxPerMin).roundToInt().coerceIn(0, maxVerschuif)
+                    val placeable = measurable.measure(
+                        constraints.copy(minWidth = 0, maxWidth = constraints.maxWidth - verschuif)
+                    )
+                    layout(constraints.maxWidth, placeable.height) { placeable.place(verschuif, 0) }
+                }
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
             Text(
                 p.titel,
                 color = tekstKleur,
@@ -715,6 +738,7 @@ private fun DetailKaart(p: Programma, nu: Long, onSluit: () -> Unit) {
         runCatching { eersteKnop.requestFocus() }
     }
     val live = nu >= p.start && nu < p.stop
+    val voorbij = p.stop <= nu
 
     Column(
         Modifier
@@ -750,10 +774,13 @@ private fun DetailKaart(p: Programma, nu: Long, onSluit: () -> Unit) {
         }
         Spacer(Modifier.height(22.dp))
         Row {
-            val pakket = zender?.appPakket
+            // Een programma dat nog moet beginnen kan je nergens bekijken; een
+            // voorbij programma kan je in de meeste apps wel terugkijken.
+            val pakket = zender?.appPakket?.takeIf { live || voorbij }
             val appNaam = zender?.appNaam ?: "de app"
             if (pakket != null) {
-                TvKnop("Kijken in $appNaam", modifier = Modifier.focusRequester(eersteKnop)) {
+                val label = if (live) "Kijken in $appNaam" else "Terugkijken in $appNaam"
+                TvKnop(label, modifier = Modifier.focusRequester(eersteKnop)) {
                     if (openApp(context, pakket)) {
                         onSluit()
                     } else {
