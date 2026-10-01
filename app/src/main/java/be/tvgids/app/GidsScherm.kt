@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,7 +133,6 @@ private fun zenderVan(key: String): ZenderDef? = Config.ZENDERS.firstOrNull { it
 fun GidsScherm(
     state: GidsState,
     onVernieuw: () -> Unit,
-    onFilter: (Land?) -> Unit,
     onStatus: () -> Unit,
 ) {
     val nu by produceState(System.currentTimeMillis()) {
@@ -150,10 +150,17 @@ fun GidsScherm(
 
     var gefocust by remember { mutableStateOf<Programma?>(null) }
     var detail by remember { mutableStateOf<Programma?>(null) }
-    var scrollMin by remember(rasterStart) {
-        mutableFloatStateOf(max(0f, (System.currentTimeMillis() - rasterStart) / MIN.toFloat() - 30f))
+    // De horizontale positie telt in minuten vanaf een vast vertrekpunt, zodat ze
+    // niet verspringt wanneer het raster na een verversing opschuift.
+    val oorsprong = rememberSaveable { rasterStart }
+    var beeldMin by rememberSaveable {
+        mutableFloatStateOf(max(0f, (System.currentTimeMillis() - oorsprong) / MIN.toFloat() - 30f))
     }
-    val scrollGeanimeerd by animateFloatAsState(scrollMin, animationSpec = tween(220), label = "scroll")
+    val beeldGeanimeerd by animateFloatAsState(beeldMin, animationSpec = tween(220), label = "scroll")
+    val rasterMin = (rasterStart - oorsprong) / MIN.toFloat()
+    // Positie binnen het huidige raster, in minuten na rasterStart.
+    fun scrollMin(): Float = max(0f, beeldMin - rasterMin)
+    fun scrollGeanimeerd(): Float = max(0f, beeldGeanimeerd - rasterMin)
     val pxPerMin = with(LocalDensity.current) { DP_PER_MIN.toPx() }
 
     val focusKnop = remember { FocusRequester() }
@@ -171,29 +178,22 @@ fun GidsScherm(
     // vraagt het bijhorende blok om de focus (opnieuw) te nemen.
     var doel by remember { mutableStateOf<Programma?>(null) }
     var focusVerzoek by remember { mutableIntStateOf(0) }
+    // Zender en begintijd van het laatst gekozen programma. Die overleven een
+    // verversing en een bezoek aan het statusscherm, het Programma zelf niet.
+    var doelZender by rememberSaveable { mutableStateOf<String?>(null) }
+    var doelStart by rememberSaveable { mutableLongStateOf(0L) }
     // Tijdstip waarrond omhoog/omlaag een programma gezocht wordt, zodat je
     // bij verticaal bladeren niet stilaan naar links of rechts afdrijft.
-    var ankerTijd by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var ankerTijd by rememberSaveable { mutableLongStateOf(System.currentTimeMillis()) }
     var ankerVast by remember { mutableStateOf(false) }
+    // Of de focus in het raster staat (en dus niet op een knop bovenaan).
+    var rasterFocus by remember { mutableStateOf(false) }
+    // Of de focus sinds het openen van dit scherm al eens geplaatst werd.
+    var geplaatst by remember { mutableStateOf(false) }
 
     fun geefFocus(p: Programma) {
         doel = p
         focusVerzoek++
-    }
-
-    val eersteLive = remember(perRij) {
-        val t = System.currentTimeMillis()
-        perRij.firstNotNullOfOrNull { rij -> rij.firstOrNull { it.start <= t && it.stop > t } }
-    }
-    LaunchedEffect(eersteLive) {
-        delay(150)
-        if (eersteLive != null) {
-            ankerTijd = System.currentTimeMillis()
-            ankerVast = true
-            geefFocus(eersteLive)
-        } else {
-            runCatching { focusKnop.requestFocus() }
-        }
     }
 
     // Zorgt dat rij `index` volledig in beeld staat (en dus opgebouwd is).
@@ -224,6 +224,35 @@ fun GidsScherm(
         val rij = navigeerbaar(alles, null)
         return rij.firstOrNull { it.start <= ankerTijd && it.stop > ankerTijd }
             ?: rij.minByOrNull { min(abs(it.start - ankerTijd), abs(it.stop - ankerTijd)) }
+    }
+
+    // Bij nieuwe gegevens (eerste keer, na een verversing of terug van het
+    // statusscherm) het vorige programma terugzoeken; anders het eerste live-programma.
+    LaunchedEffect(perRij) {
+        delay(150)
+        val t = System.currentTimeMillis()
+        val rijIndex = zenders.indexOfFirst { it.key == doelZender }
+        val terug = perRij.getOrNull(rijIndex)?.let { rij -> rij.firstOrNull { it.start == doelStart } ?: rondAnker(rij) }
+        val nieuw = terug ?: perRij.firstNotNullOfOrNull { rij -> rij.firstOrNull { it.start <= t && it.stop > t } }
+        when {
+            nieuw == null -> if (!geplaatst) runCatching { focusKnop.requestFocus() }
+            // Focus staat op een knop of in het detailvenster: niet afpakken,
+            // maar wel klaarzetten voor wanneer je terug naar het raster gaat.
+            geplaatst && (!rasterFocus || detail != null) -> {
+                doel = nieuw
+                gefocust = nieuw
+            }
+            geplaatst && nieuw == gefocust -> {}
+            else -> {
+                if (terug == null) {
+                    ankerTijd = t
+                    ankerVast = true
+                }
+                toonRij(zenders.indexOfFirst { it.key == nieuw.zenderKey })
+                geefFocus(nieuw)
+            }
+        }
+        geplaatst = true
     }
 
     // Afhandeling van de pijltjestoetsen binnen het raster. Geeft false terug als
@@ -260,7 +289,7 @@ fun GidsScherm(
             .padding(start = 40.dp, end = 40.dp, top = 22.dp, bottom = 16.dp)
     ) {
         Kop(
-            nu, state, focusKnop, onVernieuw, onFilter, onStatus,
+            nu, state, focusKnop, onVernieuw, onStatus,
             onNaarRaster = {
                 val d = doel
                 if (d != null && perRij.any { d in it }) {
@@ -283,13 +312,14 @@ fun GidsScherm(
             fun volg(p: Programma) {
                 val s = max(0f, (p.start - rasterStart) / MIN.toFloat())
                 val e = min(totaalMin, (p.stop - rasterStart) / MIN.toFloat())
-                val zichtbaar = e > scrollMin + 15f && s < scrollMin + zichtbaarMin - 15f
+                val huidig = scrollMin()
+                val zichtbaar = e > huidig + 15f && s < huidig + zichtbaarMin - 15f
                 if (!zichtbaar) {
-                    scrollMin = (s - 15f).coerceIn(0f, maxScroll)
-                } else if (s < scrollMin && e > scrollMin + zichtbaarMin) {
+                    beeldMin = rasterMin + (s - 15f).coerceIn(0f, maxScroll)
+                } else if (s < huidig && e > huidig + zichtbaarMin) {
                     // lang programma dat het hele scherm vult: laat staan
-                } else if (s > scrollMin + zichtbaarMin - 45f) {
-                    scrollMin = (s - 30f).coerceIn(0f, maxScroll)
+                } else if (s > huidig + zichtbaarMin - 45f) {
+                    beeldMin = rasterMin + (s - 30f).coerceIn(0f, maxScroll)
                 }
             }
 
@@ -303,7 +333,7 @@ fun GidsScherm(
                                 .wrapContentWidth(Alignment.Start, unbounded = true)
                                 .width(DP_PER_MIN * totaalMin)
                                 .fillMaxHeight()
-                                .offset { IntOffset(-(scrollGeanimeerd * pxPerMin).roundToInt(), 0) }
+                                .offset { IntOffset(-(scrollGeanimeerd() * pxPerMin).roundToInt(), 0) }
                         ) {
                             val stappen = RASTER_UREN * 2
                             for (i in 0 until stappen) {
@@ -330,6 +360,7 @@ fun GidsScherm(
                     Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                        .onFocusChanged { rasterFocus = it.hasFocus }
                         .onPreviewKeyEvent { e ->
                             e.type == KeyEventType.KeyDown && navigeer(e.key)
                         }
@@ -343,18 +374,20 @@ fun GidsScherm(
                                 rasterEind = rasterEind,
                                 nu = nu,
                                 pxPerMin = pxPerMin,
-                                scroll = { scrollGeanimeerd },
+                                scroll = { scrollGeanimeerd() },
                                 doel = doel,
                                 focusVerzoek = focusVerzoek,
                                 laden = state.laden && res == null,
                                 onFocus = { p ->
                                     gefocust = p
                                     doel = p
+                                    doelZender = p.zenderKey
+                                    doelStart = p.start
                                     volg(p)
                                     if (ankerVast) {
                                         ankerVast = false
                                     } else {
-                                        val beeldStart = rasterStart + (scrollMin * MIN).toLong()
+                                        val beeldStart = rasterStart + (scrollMin() * MIN).toLong()
                                         ankerTijd = max(p.start, min(beeldStart, p.stop - 1))
                                     }
                                 },
@@ -371,7 +404,7 @@ fun GidsScherm(
                     ) {
                         Box(
                             Modifier
-                                .offset { IntOffset(((nuMin - scrollGeanimeerd) * pxPerMin).roundToInt(), 0) }
+                                .offset { IntOffset(((nuMin - scrollGeanimeerd()) * pxPerMin).roundToInt(), 0) }
                                 .width(2.dp)
                                 .fillMaxHeight()
                                 .background(Kleuren.nuLijn)
@@ -404,7 +437,6 @@ private fun Kop(
     state: GidsState,
     focusKnop: FocusRequester,
     onVernieuw: () -> Unit,
-    onFilter: (Land?) -> Unit,
     onStatus: () -> Unit,
     onNaarRaster: () -> Boolean,
 ) {
@@ -803,6 +835,10 @@ private fun DetailKaart(p: Programma, nu: Long, onSluit: () -> Unit) {
 fun StatusScherm(state: GidsState, onTerug: () -> Unit) {
     BackHandler(onBack = onTerug)
     val res = state.resultaat
+    val context = LocalContext.current
+    val versie = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+    }
     val terug = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         delay(100)
@@ -811,6 +847,10 @@ fun StatusScherm(state: GidsState, onTerug: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 28.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Status van de gids", color = Kleuren.tekst, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            if (versie != null) {
+                Spacer(Modifier.width(16.dp))
+                Text("versie $versie", color = Kleuren.tekstZacht, fontSize = 15.sp)
+            }
             Spacer(Modifier.weight(1f))
             TvKnop("Terug naar de gids", modifier = Modifier.focusRequester(terug)) { onTerug() }
         }

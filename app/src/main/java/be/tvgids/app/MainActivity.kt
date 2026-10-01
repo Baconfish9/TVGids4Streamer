@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,11 +15,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +34,6 @@ data class GidsState(
     val laden: Boolean = true,
     val fout: String? = null,
     val resultaat: EpgResultaat? = null,
-    val filter: Land? = null,
 )
 
 class GidsViewModel(app: Application) : AndroidViewModel(app) {
@@ -40,15 +43,21 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<GidsState> = _state.asStateFlow()
     private var bezig = false
 
-    init {
-        viewModelScope.launch {
-            val cache = repo.laadCache()
-            if (cache != null) _state.update { it.copy(resultaat = cache, laden = false) }
-            if (verouderd(cache)) vernieuwNu()
-            while (true) {
-                delay(15 * MIN)
-                if (verouderd(_state.value.resultaat)) vernieuwNu()
-            }
+    private val cacheGeladen = viewModelScope.launch {
+        val cache = repo.laadCache()
+        if (cache != null) _state.update { it.copy(resultaat = cache, laden = false) }
+    }
+
+    /**
+     * Ververst de gids zodra ze verouderd is. Loopt enkel zolang de app in beeld
+     * is; het ophalen zelf gebeurt in viewModelScope, zodat het niet halverwege
+     * afgebroken wordt als je de app verlaat.
+     */
+    suspend fun bewaak() {
+        cacheGeladen.join()
+        while (true) {
+            if (verouderd(_state.value.resultaat)) vernieuw()
+            delay(15 * MIN)
         }
     }
 
@@ -57,10 +66,6 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun vernieuw() {
         viewModelScope.launch { vernieuwNu() }
-    }
-
-    fun zetFilter(land: Land?) {
-        _state.update { it.copy(filter = land) }
     }
 
     private suspend fun vernieuwNu() {
@@ -86,28 +91,36 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 class MainActivity : ComponentActivity() {
+    private val vm: GidsViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { App() }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) { vm.bewaak() }
+        }
+        setContent { App(vm) }
     }
 }
 
 @Composable
-fun App(vm: GidsViewModel = viewModel()) {
+fun App(vm: GidsViewModel) {
     val state by vm.state.collectAsState()
     var toonStatus by remember { mutableStateOf(false) }
+    // Bewaart de positie in de gids terwijl het statusscherm open staat.
+    val bewaarder = rememberSaveableStateHolder()
 
     MaterialTheme(colorScheme = darkColorScheme()) {
         Box(Modifier.fillMaxSize().background(Kleuren.achtergrond)) {
             if (toonStatus) {
                 StatusScherm(state = state, onTerug = { toonStatus = false })
             } else {
-                GidsScherm(
-                    state = state,
-                    onVernieuw = { vm.vernieuw() },
-                    onFilter = { vm.zetFilter(it) },
-                    onStatus = { toonStatus = true },
-                )
+                bewaarder.SaveableStateProvider("gids") {
+                    GidsScherm(
+                        state = state,
+                        onVernieuw = { vm.vernieuw() },
+                        onStatus = { toonStatus = true },
+                    )
+                }
             }
         }
     }
