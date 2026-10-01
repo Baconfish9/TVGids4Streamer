@@ -59,6 +59,7 @@ genereert met https://github.com/iptv-org/epg en ergens online zet.
 
 - Pijltjes: door zenders en tijd bladeren; de tijdlijn schuift mee.
 - OK: details van het programma, met een knop om VRT MAX, VTM GO of NPO Start te openen.
-- Omhoog vanaf de eerste zender: filter (Alle, Vlaams, Nederlands), Vernieuwen en Status.
+- Omhoog vanaf de eerste zender: Vernieuwen en Status.
 
-De gids ververst zichzelf automatisch als de gegevens ouder zijn dan 6 uur.
+De gids ververst zichzelf automatisch (terwijl de app open staat) als de gegevens
+ouder zijn dan 6 uur. Je positie in de gids blijft daarbij behouden.

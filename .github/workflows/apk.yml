@@ -35,7 +35,7 @@ jobs:
           fi
           cd "$(dirname "$INST")"
           echo "Project gevonden in: $(pwd)"
-          gradle assembleRelease --no-daemon --stacktrace
+          gradle testDebugUnitTest assembleRelease --no-daemon --stacktrace
 
       - name: APK klaarzetten
         run: cp "$(find . -name app-release.apk | head -1)" TVGids.apk

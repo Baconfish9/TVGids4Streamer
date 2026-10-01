@@ -3,6 +3,8 @@ package be.tvgids.app
 import android.content.Context
 import android.util.Xml
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -260,19 +262,35 @@ class EpgRepository(context: Context) {
         val nu = System.currentTimeMillis()
         val vanaf = nu - 3 * UUR
         val tot = nu + 30 * UUR
+
+        // Alle bronnen tegelijk ophalen, elk in een eigen verzameling.
+        val perBron = Config.EPG_BRONNEN.map { url ->
+            async {
+                val progs: MutableMap<String, MutableMap<Long, Programma>> = HashMap()
+                val nietHier = HashSet<String>()
+                val status = try {
+                    open(url).use { ins ->
+                        val info = XmltvParser.parse(ins, this@EpgRepository::koppel, vanaf, tot, progs, nietHier)
+                        BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, info.samenvatting())
+                    }
+                } catch (e: Exception) {
+                    BronStatus(url, false, e.message ?: e.javaClass.simpleName)
+                }
+                Triple(progs, nietHier, status)
+            }
+        }.awaitAll()
+
+        // Samenvoegen in de volgorde van EPG_BRONNEN: bij hetzelfde begintijdstip wint de eerste bron.
         val verzameld: MutableMap<String, MutableMap<Long, Programma>> = HashMap()
         val niet = TreeSet<String>(String.CASE_INSENSITIVE_ORDER)
         val statussen = ArrayList<BronStatus>()
-
-        for (url in Config.EPG_BRONNEN) {
-            try {
-                open(url).use { ins ->
-                    val info = XmltvParser.parse(ins, this@EpgRepository::koppel, vanaf, tot, verzameld, niet)
-                    statussen.add(BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, info.samenvatting()))
-                }
-            } catch (e: Exception) {
-                statussen.add(BronStatus(url, false, e.message ?: e.javaClass.simpleName))
+        for ((progs, nietHier, status) in perBron) {
+            for ((key, m) in progs) {
+                val doel = verzameld.getOrPut(key) { HashMap() }
+                for ((start, p) in m) doel.putIfAbsent(start, p)
             }
+            niet.addAll(nietHier)
+            statussen.add(status)
         }
 
         val programmas = verzameld.mapValues { (_, m) -> opschonen(m.values) }
@@ -285,7 +303,11 @@ class EpgRepository(context: Context) {
             val r = EpgResultaat(programmas, statussen, niet.toList(), nu)
             if (totaal > 0) {
                 try {
-                    cacheBestand.writeText(naarJson(r))
+                    // Eerst naar een tijdelijk bestand, zodat een onderbroken
+                    // schrijfactie de bestaande cache niet beschadigt.
+                    val tijdelijk = File(cacheBestand.path + ".tmp")
+                    tijdelijk.writeText(naarJson(r))
+                    if (!tijdelijk.renameTo(cacheBestand)) tijdelijk.delete()
                 } catch (e: Exception) {
                 }
             }

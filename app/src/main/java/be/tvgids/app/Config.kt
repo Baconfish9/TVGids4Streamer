@@ -64,7 +64,8 @@ object Config {
     )
 }
 
-private val TE_SCHRAPPEN = listOf("hd", "fhd", "uhd", "sd", "be", "nl", "vlaanderen", "belgie", "belgium", "nederland", "netherlands")
+// "fhd" en "uhd" vóór "hd", anders blijft er een losse "f" of "u" achter.
+private val TE_SCHRAPPEN = listOf("fhd", "uhd", "hd", "sd", "be", "nl", "vlaanderen", "belgie", "belgium", "nederland", "netherlands")
 
 /**
  * Maakt van "Eén HD", "een.be" of "EEN" allemaal "een", zodat namen uit
