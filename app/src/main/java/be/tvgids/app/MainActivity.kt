@@ -1,13 +1,19 @@
 package be.tvgids.app
 
 import android.app.Application
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -94,6 +100,12 @@ class MainActivity : ComponentActivity() {
     private val vm: GidsViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Vanaf Android 15 tekent een app altijd tot onder de systeembalken. Lichte
+        // pictogrammen op de donkere gids; de inhoud blijft er via safeDrawing vanaf.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) { vm.bewaak() }
@@ -110,7 +122,13 @@ fun App(vm: GidsViewModel) {
     val bewaarder = rememberSaveableStateHolder()
 
     MaterialTheme(colorScheme = darkColorScheme()) {
-        BoxWithConstraints(Modifier.fillMaxSize().background(Kleuren.achtergrond)) {
+        BoxWithConstraints(
+            Modifier
+                .fillMaxSize()
+                .background(Kleuren.achtergrond)
+                // Weg van statusbalk, navigatiebalk en camera-uitsparing (op TV is dit 0).
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        ) {
             if (maxHeight > maxWidth) {
                 // Telefoon of tablet rechtop: de gids past enkel liggend.
                 DraaiMelding()

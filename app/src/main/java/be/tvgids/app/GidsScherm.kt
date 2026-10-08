@@ -874,33 +874,35 @@ private fun DetailKaart(p: Programma, nu: Long, onSluit: () -> Unit) {
             .clip(RoundedCornerShape(16.dp))
             .background(Kleuren.paneel)
             .border(1.dp, Kleuren.knop, RoundedCornerShape(16.dp))
-            // Op een telefoon past niet alles in de hoogte: dan kan je scrollen.
-            .verticalScroll(rememberScrollState())
             .padding(28.dp)
     ) {
-        Text(zender?.naam ?: "", color = Color(zender?.kleur ?: 0xFFFFFFFF), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
-        Text(p.titel, color = Kleuren.tekst, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        if (p.subtitel != null) {
-            Text(p.subtitel, color = Kleuren.tekst, fontSize = 17.sp)
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "${datumLang(p.start)}, ${uurMin(p.start)} tot ${uurMin(p.stop)} (${(p.stop - p.start) / MIN} min)" +
-                if (live) ". Nu op tv." else "",
-            color = Kleuren.tekstZacht,
-            fontSize = 15.sp,
-        )
-        if (p.beschrijving != null) {
-            Spacer(Modifier.height(14.dp))
+        // Op een telefoon past niet alles in de hoogte: dan scrolt de tekst,
+        // en blijven de knoppen eronder altijd in beeld.
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            Text(zender?.naam ?: "", color = Color(zender?.kleur ?: 0xFFFFFFFF), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(p.titel, color = Kleuren.tekst, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            if (p.subtitel != null) {
+                Text(p.subtitel, color = Kleuren.tekst, fontSize = 17.sp)
+            }
+            Spacer(Modifier.height(8.dp))
             Text(
-                p.beschrijving,
-                color = Kleuren.tekst,
-                fontSize = 16.sp,
-                lineHeight = 23.sp,
-                maxLines = 9,
-                overflow = TextOverflow.Ellipsis,
+                "${datumLang(p.start)}, ${uurMin(p.start)} tot ${uurMin(p.stop)} (${(p.stop - p.start) / MIN} min)" +
+                    if (live) ". Nu op tv." else "",
+                color = Kleuren.tekstZacht,
+                fontSize = 15.sp,
             )
+            if (p.beschrijving != null) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    p.beschrijving,
+                    color = Kleuren.tekst,
+                    fontSize = 16.sp,
+                    lineHeight = 23.sp,
+                    maxLines = 9,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Spacer(Modifier.height(22.dp))
         Row {
