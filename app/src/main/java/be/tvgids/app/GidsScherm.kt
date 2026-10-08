@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -83,6 +84,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -134,9 +136,24 @@ fun uurMin(ms: Long): String = Instant.ofEpochMilli(ms).atZone(zone()).format(FM
 private fun datumLang(ms: Long): String =
     Instant.ofEpochMilli(ms).atZone(zone()).format(FMT_DATUM).replaceFirstChar { it.uppercase() }
 
-private fun tijdbalkLabel(ms: Long): String {
+private fun isMiddernacht(ms: Long): Boolean {
     val z = Instant.ofEpochMilli(ms).atZone(zone())
-    return if (z.hour == 0 && z.minute == 0) z.format(FMT_DAG) else z.format(FMT_UUR)
+    return z.hour == 0 && z.minute == 0
+}
+
+private fun tijdbalkLabel(ms: Long): String =
+    Instant.ofEpochMilli(ms).atZone(zone()).format(if (isMiddernacht(ms)) FMT_DAG else FMT_UUR)
+
+/** "Gisteren", "Vandaag", "Morgen" of anders bv. "Za 10 okt", gezien vanaf [nu]. */
+internal fun dagNaam(ms: Long, nu: Long): String {
+    val dag = Instant.ofEpochMilli(ms).atZone(zone()).toLocalDate()
+    val vandaag = Instant.ofEpochMilli(nu).atZone(zone()).toLocalDate()
+    return when (ChronoUnit.DAYS.between(vandaag, dag)) {
+        -1L -> "Gisteren"
+        0L -> "Vandaag"
+        1L -> "Morgen"
+        else -> dag.format(FMT_DAG).replaceFirstChar { it.uppercase() }
+    }
 }
 
 private fun halfUurOmlaag(ms: Long): Long = ms - (ms % (30 * MIN))
@@ -412,7 +429,21 @@ fun GidsScherm(
                 Column(Modifier.fillMaxSize().scrollable(veeg, Orientation.Horizontal)) {
                     // Tijdbalk
                     Row(Modifier.fillMaxWidth().height(TIJDBALK_HOOGTE)) {
-                        Spacer(Modifier.width(zenderBreedte))
+                        // De dag aan de linkerrand van het beeld, zodat je bij het
+                        // scrollen altijd weet of 20:00 vanavond of morgen is.
+                        val dag by remember(rasterStart, nu) {
+                            derivedStateOf { dagNaam(rasterStart + (scrollGeanimeerd() * MIN).toLong(), nu) }
+                        }
+                        Box(Modifier.width(zenderBreedte).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                            Text(
+                                dag,
+                                modifier = Modifier.padding(start = 4.dp),
+                                color = Kleuren.focus,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                            )
+                        }
                         Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
                             Box(
                                 Modifier
@@ -424,16 +455,23 @@ fun GidsScherm(
                                 val stappen = RASTER_UREN * 2
                                 for (i in 0 until stappen) {
                                     val t = rasterStart + i * 30 * MIN
+                                    val middernacht = isMiddernacht(t)
                                     Row(
                                         Modifier.offset(x = DP_PER_MIN * (i * 30)).fillMaxHeight(),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Box(Modifier.width(1.dp).height(12.dp).background(Kleuren.tekstZacht.copy(alpha = 0.5f)))
+                                        Box(
+                                            Modifier
+                                                .width(if (middernacht) 2.dp else 1.dp)
+                                                .height(12.dp)
+                                                .background(if (middernacht) Kleuren.focus else Kleuren.tekstZacht.copy(alpha = 0.5f))
+                                        )
                                         Text(
                                             tijdbalkLabel(t),
                                             modifier = Modifier.padding(start = 6.dp),
-                                            color = Kleuren.tekstZacht,
+                                            color = if (middernacht) Kleuren.focus else Kleuren.tekstZacht,
                                             fontSize = 13.sp,
+                                            fontWeight = if (middernacht) FontWeight.Bold else FontWeight.Normal,
                                         )
                                     }
                                 }
@@ -489,6 +527,18 @@ fun GidsScherm(
                                 .padding(start = zenderBreedte)
                                 .clipToBounds()
                         ) {
+                            // Gedempte lijn op elke middernacht: hier begint een nieuwe dag.
+                            for (i in 0 until RASTER_UREN * 2) {
+                                val t = rasterStart + i * 30 * MIN
+                                if (!isMiddernacht(t)) continue
+                                Box(
+                                    Modifier
+                                        .offset { IntOffset(((i * 30 - scrollGeanimeerd()) * pxPerMin).roundToInt(), 0) }
+                                        .width(2.dp)
+                                        .fillMaxHeight()
+                                        .background(Kleuren.focus.copy(alpha = 0.35f))
+                                )
+                            }
                             Box(
                                 Modifier
                                     .offset { IntOffset(((nuMin - scrollGeanimeerd()) * pxPerMin).roundToInt(), 0) }
@@ -581,7 +631,9 @@ private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState, touch: Boolean
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(zender?.naam ?: "", color = Color(zender?.kleur ?: 0xFFFFFFFF), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(12.dp))
-                Text("${uurMin(p.start)} tot ${uurMin(p.stop)}", color = Kleuren.tekstZacht, fontSize = 14.sp)
+                // Enkel bij een andere dag dan vandaag, zodat het paneel rustig blijft.
+                val dag = dagNaam(p.start, nu).takeIf { it != "Vandaag" }?.let { "$it " }.orEmpty()
+                Text("$dag${uurMin(p.start)} tot ${uurMin(p.stop)}", color = Kleuren.tekstZacht, fontSize = 14.sp)
                 Spacer(Modifier.width(12.dp))
                 Text("${(p.stop - p.start) / MIN} min", color = Kleuren.tekstZacht, fontSize = 14.sp)
                 if (live) {
