@@ -155,9 +155,77 @@ gradle testDebugUnitTest     # unit tests
 
 ### Ondertekening
 
-De APK wordt ondertekend met `app/tvgids-debug.keystore`, die bewust in de repository staat.
-Zo heeft elke build dezelfde handtekening en installeert hij over de vorige. Gebruik deze
-sleutel niet voor een publicatie in de Play Store.
+Er zijn twee sporen:
+
+- **De APK op GitHub** (om zelf te installeren) wordt ondertekend met
+  `app/tvgids-debug.keystore`, die bewust in de repository staat. Zo heeft elke build dezelfde
+  handtekening en installeert hij over de vorige.
+- **De App Bundle (AAB) voor de Play Store** wordt ondertekend met een aparte uploadsleutel
+  die nooit in de repository komt. GitHub Actions bouwt die AAB alleen als de sleutel als
+  secret is ingesteld, en zet hem bij de workflow-run als download `TVGids-playstore-aab`.
+
+De twee versies hebben een andere handtekening. Wie van de GitHub-APK naar de Play
+Store-versie overstapt, moet de app dus eerst één keer de-installeren.
+
+#### Uploadsleutel instellen (eenmalig)
+
+1. Maak de sleutel aan, **buiten** de projectmap, en bewaar hem en de wachtwoorden goed
+   (bijvoorbeeld in je wachtwoordbeheerder):
+
+   ```sh
+   keytool -genkeypair -v -keystore ~/tvgids-upload.jks -alias upload \
+     -keyalg RSA -keysize 4096 -validity 10000
+   ```
+
+2. Zet hem in GitHub onder **Settings > Secrets and variables > Actions** als vier secrets:
+
+   | Secret | Waarde |
+   |---|---|
+   | `UPLOAD_KEYSTORE_BASE64` | de uitvoer van `base64 -i ~/tvgids-upload.jks` |
+   | `UPLOAD_KEYSTORE_PASSWORD` | het wachtwoord van de keystore |
+   | `UPLOAD_KEY_ALIAS` | `upload` |
+   | `UPLOAD_KEY_PASSWORD` | het wachtwoord van de sleutel |
+
+   Met de GitHub CLI kan dat ook: `gh secret set UPLOAD_KEYSTORE_BASE64 < <(base64 -i ~/tvgids-upload.jks)`.
+
+3. Kies in de Play Console bij de eerste upload voor **Play App Signing**. Google bewaart
+   dan de echte app-sleutel; verlies je de uploadsleutel, dan kan Google hem vervangen.
+
+## Play Store
+
+Het [privacybeleid](docs/privacybeleid.md) staat in deze repository; gebruik de link naar
+dat bestand op GitHub in de Play Console. De app vraagt alleen de permissie `INTERNET`,
+gebruikt uitsluitend HTTPS en verzamelt geen gegevens.
+
+### Screenshots
+
+In [`docs/playstore/`](docs/playstore) staan screenshots die aan de eisen van de Play Store
+voldoen (JPEG zonder transparantie, 16:9):
+
+| Bestand | Formaat | Voor |
+|---|---|---|
+| `tv-1-gids.jpg`, `tv-2-detail.jpg` | 1920×1080 | Android TV |
+| `telefoon-1-gids.jpg`, `telefoon-2-detail.jpg` | 1920×1080 | Telefoon |
+| `tablet-1-gids.jpg`, `tablet-2-detail.jpg` | 2560×1440 | Tablet van 7 en 10 inch |
+
+### Stappen in de Play Console
+
+1. Maak de app aan en upload de AAB (`TVGids-playstore-aab` bij de workflow-run).
+   Kies daarbij voor **Play App Signing**.
+2. Vul bij de winkelvermelding de screenshots per vormfactor in, plus het app-icoon
+   (512×512) en de feature graphic (1024×500).
+3. Zet bij de geavanceerde instellingen, onder **Vormfactoren**, de vormfactor
+   **Android TV** aan. TV-apps krijgen een eigen beoordeling: Google controleert onder meer
+   of alles met de afstandsbediening werkt en of de banner aanwezig is.
+4. Vul het formulier **Gegevensveiligheid** in: er worden geen gegevens verzameld of gedeeld.
+5. Geef de link naar het privacybeleid op.
+
+### Versienummer
+
+De `versionCode` is `1000 +` het volgnummer van de GitHub-workflow. De Play Store aanvaardt
+alleen een hogere code dan de vorige upload. Begint de teller van GitHub ooit opnieuw,
+bijvoorbeeld na het hernoemen van de workflow, verhoog dan `versieBasis` in
+`app/build.gradle.kts` tot boven de laatst geüploade code.
 
 ## Aanpassen
 

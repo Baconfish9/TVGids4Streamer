@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # 'true' zodra de uploadsleutel voor de Play Store als secret is ingesteld.
+      HEEFT_UPLOADSLEUTEL: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +47,32 @@ jobs:
         with:
           name: TVGids-apk
           path: TVGids.apk
+
+      # Play Store: een App Bundle (AAB), ondertekend met de uploadsleutel uit de secrets.
+      # Zonder die secrets wordt deze stap overgeslagen.
+      - name: AAB bouwen voor de Play Store
+        if: env.HEEFT_UPLOADSLEUTEL == 'true'
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: |
+          export UPLOAD_KEYSTORE="$RUNNER_TEMP/upload.jks"
+          # Sleutel altijd opruimen, ook als de build mislukt.
+          trap 'rm -f "$UPLOAD_KEYSTORE"' EXIT
+          echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$UPLOAD_KEYSTORE"
+          INST=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
+          cd "$(dirname "$INST")"
+          gradle bundleRelease --no-daemon --stacktrace
+          cp "$(find . -name app-release.aab | head -1)" "$GITHUB_WORKSPACE/TVGids.aab"
+
+      # Niet publiek: download de AAB bij de workflow-run en upload hem in de Play Console.
+      - uses: actions/upload-artifact@v4
+        if: env.HEEFT_UPLOADSLEUTEL == 'true'
+        with:
+          name: TVGids-playstore-aab
+          path: TVGids.aab
 
       - uses: softprops/action-gh-release@v2
         with:

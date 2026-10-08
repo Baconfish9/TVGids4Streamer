@@ -11,6 +11,7 @@ import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -331,7 +332,8 @@ class EpgRepository(context: Context) {
         val b1 = buf.read()
         val b2 = buf.read()
         buf.reset()
-        return if (b1 == 0x1f && b2 == 0x8b) BufferedInputStream(GZIPInputStream(buf), 64 * 1024) else buf
+        val stroom = if (b1 == 0x1f && b2 == 0x8b) BufferedInputStream(GZIPInputStream(buf), 64 * 1024) else buf
+        return BegrensdeStroom(stroom, MAX_BRON_BYTES)
     }
 
     /** Sorteert en haalt overlappingen weg (sommige bronnen zijn slordig). */
@@ -416,5 +418,40 @@ class EpgRepository(context: Context) {
         val nJ = o.optJSONArray("niet") ?: JSONArray()
         for (i in 0 until nJ.length()) niet.add(nJ.getString(i))
         return EpgResultaat(programmas, bronnen, niet, o.getLong("opgehaald"))
+    }
+}
+
+/**
+ * Maximale grootte van één bron na het uitpakken. Ruim boven wat open-epg levert, maar
+ * een kapot of kwaadaardig bestand (bijvoorbeeld een .gz-bom) kan zo de app niet laten
+ * vastlopen of het geheugen en de opslag opsouperen.
+ */
+private const val MAX_BRON_BYTES = 300L * 1024 * 1024
+
+/** Leest door tot [max] bytes en geeft daarna een fout. */
+private class BegrensdeStroom(bron: InputStream, private val max: Long) : FilterInputStream(bron) {
+    private var gelezen = 0L
+
+    override fun read(): Int {
+        val b = super.read()
+        if (b >= 0) tel(1)
+        return b
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        val n = super.read(b, off, len)
+        if (n > 0) tel(n.toLong())
+        return n
+    }
+
+    override fun skip(n: Long): Long {
+        val s = super.skip(n)
+        if (s > 0) tel(s)
+        return s
+    }
+
+    private fun tel(n: Long) {
+        gelezen += n
+        if (gelezen > max) throw IOException("Bron groter dan ${max / (1024 * 1024)} MB, afgebroken")
     }
 }
