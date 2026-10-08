@@ -15,17 +15,18 @@ jobs:
       # 'true' zodra de uploadsleutel voor de Play Store als secret is ingesteld.
       HEEFT_UPLOADSLEUTEL: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Bestanden in de repository tonen
         run: find . -not -path './.git/*' -type f | sort
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v4
+      # v5 en niet v6: vanaf v6 valt de cache onder aparte, niet-open gebruiksvoorwaarden.
+      - uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '9.6.0'
 
@@ -43,7 +44,7 @@ jobs:
       - name: APK klaarzetten
         run: cp "$(find . -name app-release.apk | head -1)" TVGids.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: TVGids-apk
           path: TVGids.apk
@@ -68,13 +69,13 @@ jobs:
           cp "$(find . -name app-release.aab | head -1)" "$GITHUB_WORKSPACE/TVGids.aab"
 
       # Niet publiek: download de AAB bij de workflow-run en upload hem in de Play Console.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: env.HEEFT_UPLOADSLEUTEL == 'true'
         with:
           name: TVGids-playstore-aab
           path: TVGids.aab
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: latest
           name: TV Gids (laatste build)
