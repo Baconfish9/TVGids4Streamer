@@ -6,7 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -110,8 +110,11 @@ fun App(vm: GidsViewModel) {
     val bewaarder = rememberSaveableStateHolder()
 
     MaterialTheme(colorScheme = darkColorScheme()) {
-        Box(Modifier.fillMaxSize().background(Kleuren.achtergrond)) {
-            if (toonStatus) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Kleuren.achtergrond)) {
+            if (maxHeight > maxWidth) {
+                // Telefoon of tablet rechtop: de gids past enkel liggend.
+                DraaiMelding()
+            } else if (toonStatus) {
                 StatusScherm(state = state, onTerug = { toonStatus = false })
             } else {
                 bewaarder.SaveableStateProvider("gids") {

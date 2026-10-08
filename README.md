@@ -2,13 +2,14 @@
 
 [![APK bouwen](https://github.com/Baconfish9/TVGids4Streamer/actions/workflows/apk.yml/badge.svg)](https://github.com/Baconfish9/TVGids4Streamer/actions/workflows/apk.yml)
 [![Laatste release](https://img.shields.io/github/release-date/Baconfish9/TVGids4Streamer?label=laatste%20build)](https://github.com/Baconfish9/TVGids4Streamer/releases/latest)
-![Platform](https://img.shields.io/badge/platform-Android%20TV%20%7C%20Google%20TV-3ddc84)
+![Platform](https://img.shields.io/badge/platform-Android%20TV%20%7C%20telefoon%20%7C%20tablet-3ddc84)
 ![minSdk](https://img.shields.io/badge/minSdk-26-blue)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7f52ff)
 
 Een live tv-gids met tijdlijn voor de **Google TV Streamer**, met de Vlaamse zenders
 (VRT, VTM, Play) en de Nederlandse publieke omroep (NPO). Volledig te bedienen met de
 afstandsbediening, en met één druk op de knop door naar VRT MAX, VTM GO, Play of NPO Start.
+Werkt ook op Android-telefoons en -tablets, in liggende stand.
 
 ![Schermafbeelding van de gids](docs/screenshot.png)
 
@@ -30,6 +31,9 @@ afstandsbediening, en met één druk op de knop door naar VRT MAX, VTM GO, Play 
 - **Gemaakt voor de afstandsbediening**: de tijdlijn schuift mee terwijl je bladert. Titels
   van lange programma's blijven zichtbaar aan de linkerrand en heel korte opvullers worden
   overgeslagen.
+- **Ook op telefoon en tablet** (liggend): vegen door de tijdlijn, tikken voor details en
+  een knop **Nu** om terug te springen. Hou je het toestel rechtop, dan vraagt een
+  animatie om het te draaien. Op een telefoon verdwijnt het infopaneel om plaats te sparen.
 - **Infopaneel en detailvenster** met uren, duur, genre en beschrijving.
 - **Kijken of terugkijken**: vanuit het detailvenster open je meteen de app van de zender.
 - **Automatisch verversen** zodra de gegevens ouder zijn dan 6 uur. Je positie in de gids
@@ -89,6 +93,9 @@ manier; ze komt gewoon over de vorige.
 | OK | Details van het programma |
 | Omhoog vanaf de eerste zender | Naar de knoppen **Vernieuwen** en **Status** |
 | Terug | Detailvenster of statusscherm sluiten |
+
+Op een telefoon of tablet veeg je horizontaal door de tijd en verticaal door de zenders.
+Tik op een programma voor de details; **Nu** brengt je terug naar het huidige uur.
 
 In het detailvenster zie je **Kijken in …** bij een programma dat nu loopt en
 **Terugkijken in …** bij een programma dat al voorbij is. Bij een programma dat nog moet
@@ -175,6 +182,7 @@ die naar dezelfde naam luisteren.
 ```
 app/src/main/java/be/tvgids/app/
 ├── Config.kt        Zenders, EPG-bronnen en het vergelijken van zendernamen
+├── DraaiMelding.kt  Geanimeerde melding om een telefoon of tablet liggend te houden
 ├── Epg.kt           XMLTV-parser, ophalen, opschonen en cache
 ├── GidsScherm.kt    De gids, het detailvenster en het statusscherm (Jetpack Compose)
 └── MainActivity.kt  Activity en ViewModel, automatisch verversen

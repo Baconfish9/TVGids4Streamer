@@ -2,14 +2,19 @@ package be.tvgids.app
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,12 +28,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +71,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,6 +113,10 @@ object Kleuren {
 private val DP_PER_MIN = 5.dp
 private val RIJ_HOOGTE = 58.dp
 private val ZENDER_BREEDTE = 170.dp
+// Smallere zenderkolom voor een telefoon in liggende stand.
+private val ZENDER_BREEDTE_COMPACT = 110.dp
+/** Schermen lager dan dit (telefoons) krijgen de compacte layout zonder infopaneel. */
+private val COMPACT_ONDER = 480.dp
 private val TIJDBALK_HOOGTE = 30.dp
 private const val RASTER_UREN = 30
 /** Minimale breedte die de meeschuivende titel aan het einde van een blok houdt. */
@@ -160,12 +174,22 @@ fun GidsScherm(
     var beeldMin by rememberSaveable {
         mutableFloatStateOf(max(0f, (System.currentTimeMillis() - oorsprong) / MIN.toFloat() - 30f))
     }
-    val beeldGeanimeerd by animateFloatAsState(beeldMin, animationSpec = tween(220), label = "scroll")
+    // Tijdens het vegen volgt de tijdlijn de vinger meteen, zonder na te ijlen.
+    var vegen by remember { mutableStateOf(false) }
+    val beeldGeanimeerd by animateFloatAsState(
+        beeldMin,
+        animationSpec = if (vegen) snap() else tween(220),
+        label = "scroll",
+    )
     val rasterMin = (rasterStart - oorsprong) / MIN.toFloat()
     // Positie binnen het huidige raster, in minuten na rasterStart.
     fun scrollMin(): Float = max(0f, beeldMin - rasterMin)
     fun scrollGeanimeerd(): Float = max(0f, beeldGeanimeerd - rasterMin)
     val pxPerMin = with(LocalDensity.current) { DP_PER_MIN.toPx() }
+
+    val context = LocalContext.current
+    // Telefoon of tablet (geen Android TV): bedienen met de vinger.
+    val touch = remember { !context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) }
 
     val focusKnop = remember { FocusRequester() }
     val lijst = rememberLazyListState()
@@ -219,6 +243,14 @@ fun GidsScherm(
     fun geefFocus(p: Programma) {
         doel = p
         focusVerzoek++
+    }
+
+    // Onthoudt het gekozen programma, zodat het een verversing overleeft.
+    fun kies(p: Programma) {
+        gefocust = p
+        doel = p
+        doelZender = p.zenderKey
+        doelStart = p.start
     }
 
     // Zorgt dat rij `index` volledig in beeld staat (en dus opgebouwd is).
@@ -308,132 +340,163 @@ fun GidsScherm(
         return true
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(start = 40.dp, end = 40.dp, top = 22.dp, bottom = 16.dp)
-    ) {
-        Kop(
-            nu, state, focusKnop, onVernieuw, onStatus,
-            onNaarRaster = {
-                val d = doel
-                if (d != null && perRij.any { d in it }) {
-                    focusVerzoek++
-                    true
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val compact = maxHeight < COMPACT_ONDER
+        val zenderBreedte = if (compact) ZENDER_BREEDTE_COMPACT else ZENDER_BREEDTE
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    if (compact) Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 8.dp)
+                    else Modifier.padding(start = 40.dp, end = 40.dp, top = 22.dp, bottom = 16.dp)
+                )
+        ) {
+            Kop(
+                nu, state, focusKnop, onVernieuw, onStatus,
+                compact = compact,
+                // Na het vegen snel terug naar het huidige uur (op TV volstaan de pijltjes).
+                onNu = if (touch) {
+                    { beeldMin = max(0f, (System.currentTimeMillis() - oorsprong) / MIN.toFloat() - 30f) }
                 } else {
-                    false
-                }
-            },
-        )
-        Spacer(Modifier.height(12.dp))
-        InfoPaneel(gefocust, nu, state)
-        Spacer(Modifier.height(10.dp))
-
-        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-            val zichtbaarMin = (maxWidth - ZENDER_BREEDTE) / DP_PER_MIN
-            val maxScroll = max(0f, totaalMin - zichtbaarMin)
-
-            // Houdt het gefocuste programma in beeld door de tijdlijn te verschuiven.
-            fun volg(p: Programma) {
-                val s = max(0f, (p.start - rasterStart) / MIN.toFloat())
-                val e = min(totaalMin, (p.stop - rasterStart) / MIN.toFloat())
-                val huidig = scrollMin()
-                val zichtbaar = e > huidig + 15f && s < huidig + zichtbaarMin - 15f
-                if (!zichtbaar) {
-                    beeldMin = rasterMin + (s - 15f).coerceIn(0f, maxScroll)
-                } else if (s < huidig && e > huidig + zichtbaarMin) {
-                    // lang programma dat het hele scherm vult: laat staan
-                } else if (s > huidig + zichtbaarMin - 45f) {
-                    beeldMin = rasterMin + (s - 30f).coerceIn(0f, maxScroll)
-                }
+                    null
+                },
+                onNaarRaster = {
+                    val d = doel
+                    if (d != null && perRij.any { d in it }) {
+                        focusVerzoek++
+                        true
+                    } else {
+                        false
+                    }
+                },
+            )
+            if (compact) {
+                Spacer(Modifier.height(8.dp))
+            } else {
+                Spacer(Modifier.height(12.dp))
+                InfoPaneel(gefocust, nu, state, touch)
+                Spacer(Modifier.height(10.dp))
             }
 
-            Column(Modifier.fillMaxSize()) {
-                // Tijdbalk
-                Row(Modifier.fillMaxWidth().height(TIJDBALK_HOOGTE)) {
-                    Spacer(Modifier.width(ZENDER_BREEDTE))
-                    Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                        Box(
-                            Modifier
-                                .wrapContentWidth(Alignment.Start, unbounded = true)
-                                .width(DP_PER_MIN * totaalMin)
-                                .fillMaxHeight()
-                                .offset { IntOffset(-(scrollGeanimeerd() * pxPerMin).roundToInt(), 0) }
-                        ) {
-                            val stappen = RASTER_UREN * 2
-                            for (i in 0 until stappen) {
-                                val t = rasterStart + i * 30 * MIN
-                                Row(
-                                    Modifier.offset(x = DP_PER_MIN * (i * 30)).fillMaxHeight(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Box(Modifier.width(1.dp).height(12.dp).background(Kleuren.tekstZacht.copy(alpha = 0.5f)))
-                                    Text(
-                                        tijdbalkLabel(t),
-                                        modifier = Modifier.padding(start = 6.dp),
-                                        color = Kleuren.tekstZacht,
-                                        fontSize = 13.sp,
-                                    )
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                val zichtbaarMin = (maxWidth - zenderBreedte) / DP_PER_MIN
+                val maxScroll = max(0f, totaalMin - zichtbaarMin)
+
+                // Horizontaal vegen verschuift de tijdlijn (met naloop); verticaal
+                // scrollen doet de LazyColumn zelf.
+                val veeg = rememberScrollableState { delta ->
+                    val oud = beeldMin.coerceIn(rasterMin, rasterMin + maxScroll)
+                    val nieuw = (oud - delta / pxPerMin).coerceIn(rasterMin, rasterMin + maxScroll)
+                    beeldMin = nieuw
+                    (oud - nieuw) * pxPerMin
+                }
+                LaunchedEffect(veeg) {
+                    snapshotFlow { veeg.isScrollInProgress }.collect { vegen = it }
+                }
+
+                // Houdt het gefocuste programma in beeld door de tijdlijn te verschuiven.
+                fun volg(p: Programma) {
+                    val s = max(0f, (p.start - rasterStart) / MIN.toFloat())
+                    val e = min(totaalMin, (p.stop - rasterStart) / MIN.toFloat())
+                    val huidig = scrollMin()
+                    val zichtbaar = e > huidig + 15f && s < huidig + zichtbaarMin - 15f
+                    if (!zichtbaar) {
+                        beeldMin = rasterMin + (s - 15f).coerceIn(0f, maxScroll)
+                    } else if (s < huidig && e > huidig + zichtbaarMin) {
+                        // lang programma dat het hele scherm vult: laat staan
+                    } else if (s > huidig + zichtbaarMin - 45f) {
+                        beeldMin = rasterMin + (s - 30f).coerceIn(0f, maxScroll)
+                    }
+                }
+
+                Column(Modifier.fillMaxSize().scrollable(veeg, Orientation.Horizontal)) {
+                    // Tijdbalk
+                    Row(Modifier.fillMaxWidth().height(TIJDBALK_HOOGTE)) {
+                        Spacer(Modifier.width(zenderBreedte))
+                        Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
+                            Box(
+                                Modifier
+                                    .wrapContentWidth(Alignment.Start, unbounded = true)
+                                    .width(DP_PER_MIN * totaalMin)
+                                    .fillMaxHeight()
+                                    .offset { IntOffset(-(scrollGeanimeerd() * pxPerMin).roundToInt(), 0) }
+                            ) {
+                                val stappen = RASTER_UREN * 2
+                                for (i in 0 until stappen) {
+                                    val t = rasterStart + i * 30 * MIN
+                                    Row(
+                                        Modifier.offset(x = DP_PER_MIN * (i * 30)).fillMaxHeight(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Box(Modifier.width(1.dp).height(12.dp).background(Kleuren.tekstZacht.copy(alpha = 0.5f)))
+                                        Text(
+                                            tijdbalkLabel(t),
+                                            modifier = Modifier.padding(start = 6.dp),
+                                            color = Kleuren.tekstZacht,
+                                            fontSize = 13.sp,
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Zenders met programma's, plus de rode "nu"-lijn eroverheen
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .onFocusChanged { rasterFocus = it.hasFocus }
-                        .onPreviewKeyEvent { e ->
-                            e.type == KeyEventType.KeyDown && navigeer(e.key)
-                        }
-                ) {
-                    LazyColumn(Modifier.fillMaxSize(), state = lijst) {
-                        itemsIndexed(zenders, key = { _, z -> z.key }) { i, z ->
-                            ZenderRij(
-                                zender = z,
-                                zichtbaar = perRij[i],
-                                rasterStart = rasterStart,
-                                rasterEind = rasterEind,
-                                nu = nu,
-                                pxPerMin = pxPerMin,
-                                scroll = { scrollGeanimeerd() },
-                                doel = doel,
-                                focusVerzoek = focusVerzoek,
-                                laden = state.laden && res == null,
-                                onFocus = { p ->
-                                    gefocust = p
-                                    doel = p
-                                    doelZender = p.zenderKey
-                                    doelStart = p.start
-                                    volg(p)
-                                    if (ankerVast) {
-                                        ankerVast = false
-                                    } else {
-                                        val beeldStart = rasterStart + (scrollMin() * MIN).toLong()
-                                        ankerTijd = max(p.start, min(beeldStart, p.stop - 1))
-                                    }
-                                },
-                                onKlik = { p -> detail = p },
-                            )
-                        }
-                    }
-                    val nuMin = (nu - rasterStart) / MIN.toFloat()
+                    // Zenders met programma's, plus de rode "nu"-lijn eroverheen
                     Box(
                         Modifier
-                            .matchParentSize()
-                            .padding(start = ZENDER_BREEDTE)
-                            .clipToBounds()
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .onFocusChanged { rasterFocus = it.hasFocus }
+                            .onPreviewKeyEvent { e ->
+                                e.type == KeyEventType.KeyDown && navigeer(e.key)
+                            }
                     ) {
+                        LazyColumn(Modifier.fillMaxSize(), state = lijst) {
+                            itemsIndexed(zenders, key = { _, z -> z.key }) { i, z ->
+                                ZenderRij(
+                                    zender = z,
+                                    zichtbaar = perRij[i],
+                                    zenderBreedte = zenderBreedte,
+                                    rasterStart = rasterStart,
+                                    rasterEind = rasterEind,
+                                    nu = nu,
+                                    pxPerMin = pxPerMin,
+                                    scroll = { scrollGeanimeerd() },
+                                    doel = doel,
+                                    focusVerzoek = focusVerzoek,
+                                    laden = state.laden && res == null,
+                                    onFocus = { p ->
+                                        kies(p)
+                                        volg(p)
+                                        if (ankerVast) {
+                                            ankerVast = false
+                                        } else {
+                                            val beeldStart = rasterStart + (scrollMin() * MIN).toLong()
+                                            ankerTijd = max(p.start, min(beeldStart, p.stop - 1))
+                                        }
+                                    },
+                                    onKlik = { p ->
+                                        kies(p)
+                                        detail = p
+                                    },
+                                )
+                            }
+                        }
+                        val nuMin = (nu - rasterStart) / MIN.toFloat()
                         Box(
                             Modifier
-                                .offset { IntOffset(((nuMin - scrollGeanimeerd()) * pxPerMin).roundToInt(), 0) }
-                                .width(2.dp)
-                                .fillMaxHeight()
-                                .background(Kleuren.nuLijn)
-                        )
+                                .matchParentSize()
+                                .padding(start = zenderBreedte)
+                                .clipToBounds()
+                        ) {
+                            Box(
+                                Modifier
+                                    .offset { IntOffset(((nuMin - scrollGeanimeerd()) * pxPerMin).roundToInt(), 0) }
+                                    .width(2.dp)
+                                    .fillMaxHeight()
+                                    .background(Kleuren.nuLijn)
+                            )
+                        }
                     }
                 }
             }
@@ -464,6 +527,8 @@ private fun Kop(
     onVernieuw: () -> Unit,
     onStatus: () -> Unit,
     onNaarRaster: () -> Boolean,
+    compact: Boolean,
+    onNu: (() -> Unit)?,
 ) {
     Row(
         Modifier
@@ -473,10 +538,13 @@ private fun Kop(
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(uurMin(nu), color = Kleuren.tekst, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(16.dp))
-        Text(datumLang(nu), color = Kleuren.tekstZacht, fontSize = 17.sp)
+        Text(uurMin(nu), color = Kleuren.tekst, fontSize = if (compact) 24.sp else 30.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(if (compact) 12.dp else 16.dp))
+        Text(datumLang(nu), color = Kleuren.tekstZacht, fontSize = if (compact) 15.sp else 17.sp)
         Spacer(Modifier.weight(1f))
+        if (onNu != null) {
+            TvKnop("Nu") { onNu() }
+        }
         TvKnop(
             if (state.laden) "Bezig met laden" else "Vernieuwen",
             modifier = Modifier.focusRequester(focusKnop),
@@ -486,7 +554,7 @@ private fun Kop(
 }
 
 @Composable
-private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState) {
+private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState, touch: Boolean) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -499,6 +567,7 @@ private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState) {
             val boodschap = when {
                 state.fout != null -> state.fout ?: ""
                 state.laden && state.resultaat == null -> "De gids wordt voor het eerst opgehaald. Dat kan even duren."
+                touch -> "Veeg om door de gids te bladeren. Tik op een programma voor meer info."
                 else -> "Gebruik de pijltjestoetsen om door de gids te bladeren. Druk op OK voor meer info."
             }
             Text(
@@ -550,6 +619,7 @@ private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState) {
 private fun ZenderRij(
     zender: ZenderDef,
     zichtbaar: List<Programma>,
+    zenderBreedte: Dp,
     rasterStart: Long,
     rasterEind: Long,
     nu: Long,
@@ -567,7 +637,7 @@ private fun ZenderRij(
             .height(RIJ_HOOGTE)
             .padding(vertical = 3.dp)
     ) {
-        ZenderLabel(zender)
+        ZenderLabel(zender, zenderBreedte)
         Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
             if (zichtbaar.isEmpty()) {
                 Text(
@@ -613,10 +683,10 @@ private fun ZenderRij(
 }
 
 @Composable
-private fun ZenderLabel(z: ZenderDef) {
+private fun ZenderLabel(z: ZenderDef, breedte: Dp) {
     Row(
         Modifier
-            .width(ZENDER_BREEDTE)
+            .width(breedte)
             .fillMaxHeight()
             .padding(end = 8.dp)
             .clip(RoundedCornerShape(8.dp))
@@ -799,10 +869,13 @@ private fun DetailKaart(p: Programma, nu: Long, onSluit: () -> Unit) {
 
     Column(
         Modifier
-            .width(640.dp)
+            .widthIn(max = 640.dp)
+            .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(Kleuren.paneel)
             .border(1.dp, Kleuren.knop, RoundedCornerShape(16.dp))
+            // Op een telefoon past niet alles in de hoogte: dan kan je scrollen.
+            .verticalScroll(rememberScrollState())
             .padding(28.dp)
     ) {
         Text(zender?.naam ?: "", color = Color(zender?.kleur ?: 0xFFFFFFFF), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
