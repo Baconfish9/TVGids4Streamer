@@ -25,6 +25,8 @@ import java.util.zip.GZIPInputStream
 
 const val MIN = 60_000L
 const val UUR = 60 * MIN
+/** Zo lang blijven voorbije programma's bewaard, om ze te kunnen terugkijken. */
+const val GESCHIEDENIS = 7 * 24 * UUR
 
 data class Programma(
     val zenderKey: String,
@@ -71,7 +73,7 @@ private fun kort(ms: Long): String =
 fun ParseInfo.samenvatting(): String {
     val periode = if (programmas > 0) " Gegevens van ${kort(vroegste)} tot ${kort(laatste)}." else ""
     return "$gekoppeld van $zenders zenders gekoppeld. $programmas programma's in bron, " +
-        "$voorGekoppeld voor onze zenders, waarvan $inVenster in de komende dag.$periode"
+        "$voorGekoppeld voor onze zenders, waarvan $inVenster binnen de gids.$periode"
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +263,7 @@ class EpgRepository(context: Context) {
 
     suspend fun haalOp(vorige: EpgResultaat?): EpgResultaat = withContext(Dispatchers.IO) {
         val nu = System.currentTimeMillis()
-        val vanaf = nu - 3 * UUR
+        val vanaf = nu - GESCHIEDENIS
         val tot = nu + 30 * UUR
 
         // Alle bronnen tegelijk ophalen, elk in een eigen verzameling.
@@ -294,12 +296,13 @@ class EpgRepository(context: Context) {
             statussen.add(status)
         }
 
-        val programmas = verzameld.mapValues { (_, m) -> opschonen(m.values) }
-        val totaal = programmas.values.sumOf { it.size }
+        val nieuw = verzameld.mapValues { (_, m) -> opschonen(m.values) }
+        val totaal = nieuw.values.sumOf { it.size }
+        val programmas = metGeschiedenis(nieuw, vorige, nu)
 
         if (totaal == 0 && vorige != null) {
             // Niets nieuws gevonden: oude gids houden, wel de status tonen.
-            vorige.copy(bronnen = statussen, nietGekoppeld = niet.toList())
+            vorige.copy(programmas = programmas, bronnen = statussen, nietGekoppeld = niet.toList())
         } else {
             val r = EpgResultaat(programmas, statussen, niet.toList(), nu)
             if (totaal > 0) {
@@ -334,19 +337,6 @@ class EpgRepository(context: Context) {
         buf.reset()
         val stroom = if (b1 == 0x1f && b2 == 0x8b) BufferedInputStream(GZIPInputStream(buf), 64 * 1024) else buf
         return BegrensdeStroom(stroom, MAX_BRON_BYTES)
-    }
-
-    /** Sorteert en haalt overlappingen weg (sommige bronnen zijn slordig). */
-    private fun opschonen(lijst: Collection<Programma>): List<Programma> {
-        val gesorteerd = lijst.sortedBy { it.start }
-        val uit = ArrayList<Programma>(gesorteerd.size)
-        for (i in gesorteerd.indices) {
-            var p = gesorteerd[i]
-            val volgende = gesorteerd.getOrNull(i + 1)
-            if (volgende != null && p.stop > volgende.start) p = p.copy(stop = volgende.start)
-            if (p.stop > p.start) uit.add(p)
-        }
-        return uit
     }
 
     private fun naarJson(r: EpgResultaat): String {
@@ -419,6 +409,41 @@ class EpgRepository(context: Context) {
         for (i in 0 until nJ.length()) niet.add(nJ.getString(i))
         return EpgResultaat(programmas, bronnen, niet, o.getLong("opgehaald"))
     }
+}
+
+/**
+ * De bronnen beginnen pas om middernacht van vandaag. Wat we eerder al hadden,
+ * blijft daarom bewaard: per zender alles van vóór het eerste programma in de
+ * nieuwe gegevens, tot [GESCHIEDENIS] terug.
+ */
+internal fun metGeschiedenis(
+    nieuw: Map<String, List<Programma>>,
+    vorige: EpgResultaat?,
+    nu: Long,
+): Map<String, List<Programma>> {
+    if (vorige == null) return nieuw
+    val grens = nu - GESCHIEDENIS
+    val uit = HashMap(nieuw)
+    for ((key, oud) in vorige.programmas) {
+        val vers = nieuw[key].orEmpty()
+        val eerste = vers.firstOrNull()?.start ?: Long.MAX_VALUE
+        val bewaard = oud.filter { it.stop > grens && it.start < eerste }
+        if (bewaard.isNotEmpty()) uit[key] = opschonen(bewaard + vers)
+    }
+    return uit
+}
+
+/** Sorteert en haalt overlappingen weg (sommige bronnen zijn slordig). */
+internal fun opschonen(lijst: Collection<Programma>): List<Programma> {
+    val gesorteerd = lijst.sortedBy { it.start }
+    val uit = ArrayList<Programma>(gesorteerd.size)
+    for (i in gesorteerd.indices) {
+        var p = gesorteerd[i]
+        val volgende = gesorteerd.getOrNull(i + 1)
+        if (volgende != null && p.stop > volgende.start) p = p.copy(stop = volgende.start)
+        if (p.stop > p.start) uit.add(p)
+    }
+    return uit
 }
 
 /**

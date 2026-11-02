@@ -121,6 +121,7 @@ private val ZENDER_BREEDTE_COMPACT = 110.dp
 /** Schermen lager dan dit (telefoons) krijgen de compacte layout zonder infopaneel. */
 private val COMPACT_ONDER = 480.dp
 private val TIJDBALK_HOOGTE = 30.dp
+/** Hoe ver het raster vooruit loopt, gerekend vanaf twee uur geleden. */
 private const val RASTER_UREN = 30
 /** Minimale breedte die de meeschuivende titel aan het einde van een blok houdt. */
 private val TEKST_MIN_BREEDTE = 60.dp
@@ -178,9 +179,16 @@ fun GidsScherm(
         }
     }
     val res = state.resultaat
-    val rasterStart = remember(res?.opgehaald) { halfUurOmlaag(System.currentTimeMillis() - 2 * UUR) }
-    val rasterEind = rasterStart + RASTER_UREN * UUR
-    val totaalMin = (RASTER_UREN * 60).toFloat()
+    // Het raster begint bij het oudste bewaarde programma (hoogstens een week
+    // terug), zodat je ook voorbije programma's kan opzoeken om terug te kijken.
+    val rasterEind = remember(res?.opgehaald) { halfUurOmlaag(System.currentTimeMillis() - 2 * UUR) + RASTER_UREN * UUR }
+    val rasterStart = remember(res?.opgehaald) {
+        val t = System.currentTimeMillis()
+        val vroegste = res?.programmas?.values?.mapNotNull { it.firstOrNull()?.start }?.minOrNull() ?: t
+        halfUurOmlaag(max(vroegste, t - GESCHIEDENIS).coerceAtMost(t - 2 * UUR))
+    }
+    val halfUren = ((rasterEind - rasterStart) / (30 * MIN)).toInt()
+    val totaalMin = (halfUren * 30).toFloat()
     // Alle zenders in één lijst: eerst de Vlaamse, dan de Nederlandse.
     val zenders = remember { Config.ZENDERS.sortedBy { it.land.ordinal } }
 
@@ -453,8 +461,7 @@ fun GidsScherm(
                                     .fillMaxHeight()
                                     .offset { IntOffset(-(scrollGeanimeerd() * pxPerMin).roundToInt(), 0) }
                             ) {
-                                val stappen = RASTER_UREN * 2
-                                for (i in 0 until stappen) {
+                                for (i in 0 until halfUren) {
                                     val t = rasterStart + i * 30 * MIN
                                     val middernacht = isMiddernacht(t)
                                     Row(
@@ -490,6 +497,11 @@ fun GidsScherm(
                                 e.type == KeyEventType.KeyDown && navigeer(e.key)
                             }
                     ) {
+                        // Een week aan blokken per rij is te zwaar om in één keer op te
+                        // bouwen: enkel wat rond het beeld ligt, in stappen van twee uur.
+                        val vak by remember(rasterStart) { derivedStateOf { (scrollGeanimeerd() / 120f).toInt() } }
+                        val vensterVan = rasterStart + (vak - 2) * 2 * UUR
+                        val vensterTot = rasterStart + (vak + 5) * 2 * UUR
                         LazyColumn(Modifier.fillMaxSize(), state = lijst) {
                             itemsIndexed(zenders, key = { _, z -> z.key }) { i, z ->
                                 ZenderRij(
@@ -498,6 +510,8 @@ fun GidsScherm(
                                     zenderBreedte = zenderBreedte,
                                     rasterStart = rasterStart,
                                     rasterEind = rasterEind,
+                                    vensterVan = vensterVan,
+                                    vensterTot = vensterTot,
                                     nu = nu,
                                     pxPerMin = pxPerMin,
                                     scroll = { scrollGeanimeerd() },
@@ -529,7 +543,7 @@ fun GidsScherm(
                                 .clipToBounds()
                         ) {
                             // Gedempte lijn op elke middernacht: hier begint een nieuwe dag.
-                            for (i in 0 until RASTER_UREN * 2) {
+                            for (i in 0 until halfUren) {
                                 val t = rasterStart + i * 30 * MIN
                                 if (!isMiddernacht(t)) continue
                                 Box(
@@ -675,6 +689,8 @@ private fun ZenderRij(
     zenderBreedte: Dp,
     rasterStart: Long,
     rasterEind: Long,
+    vensterVan: Long,
+    vensterTot: Long,
     nu: Long,
     pxPerMin: Float,
     scroll: () -> Float,
@@ -703,11 +719,13 @@ private fun ZenderRij(
                 Box(
                     Modifier
                         .wrapContentWidth(Alignment.Start, unbounded = true)
-                        .width(DP_PER_MIN * (RASTER_UREN * 60))
+                        .width(DP_PER_MIN * ((rasterEind - rasterStart) / MIN.toFloat()))
                         .fillMaxHeight()
                         .offset { IntOffset(-(scroll() * pxPerMin).roundToInt(), 0) }
                 ) {
                     for (p in zichtbaar) {
+                        // Het doel altijd opbouwen, anders kan het de focus niet krijgen.
+                        if (p != doel && (p.stop <= vensterVan || p.start >= vensterTot)) continue
                         key(p.start) {
                             val s = max(p.start, rasterStart)
                             val e = min(p.stop, rasterEind)

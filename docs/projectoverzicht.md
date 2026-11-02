@@ -21,7 +21,7 @@ Een **Android TV-app in Kotlin met Jetpack Compose**. Ze toont een live tv-gids 
   | Play | Play, Play Fictie, Play Actie, Play Crime, Play Reality | Play (`be.goplay.app`) |
   | NPO | NPO 1, NPO 2, NPO 3 | NPO Start (`nl.uitzendinggemist`) |
 
-- **Tijdlijn:** ze loopt 30 uur, vanaf ongeveer twee uur geleden. Een rode lijn toont het huidige moment en lopende programma's krijgen een voortgangsbalk. Alle uren staan altijd in Brusselse tijd, ook als het toestel anders is ingesteld.
+- **Tijdlijn:** ze loopt van het oudste bewaarde programma (hoogstens 7 dagen terug) tot 28 uur vooruit. Enkel de programmablokken rond het beeld worden opgebouwd, zodat een week aan gegevens vlot blijft. Een rode lijn toont het huidige moment en lopende programma's krijgen een voortgangsbalk. Alle uren staan altijd in Brusselse tijd, ook als het toestel anders is ingesteld.
 - **Bediening met de pijltjes:**
   - De tijdlijn schuift mee terwijl je bladert.
   - Bij omhoog en omlaag blijf je rond hetzelfde tijdstip, zodat je niet geleidelijk naar links of rechts afdrijft.
@@ -53,6 +53,7 @@ app/src/test/java/be/tvgids/app/KoppelenTest.kt   Unit tests
   - Overlappende programma's worden rechtgezet.
   - De gids wordt als JSON bewaard (via een tijdelijk bestand, zodat een onderbroken schrijfactie de cache niet beschadigt). Zo start de app snel en toont ze ook zonder internet iets.
   - Levert een verversing niets op, dan blijft de vorige gids staan.
+  - De bronnen beginnen om middernacht van vandaag. Bij elke verversing blijven daarom de oudere programma's uit de vorige gids bewaard, tot 7 dagen terug (`GESCHIEDENIS`). Wie de app minstens om de twee dagen opent, heeft zo een volledige week.
 - **`GidsScherm.kt`:** de tijdlijn, de eigen pijltjesnavigatie, het infopaneel, het detailvenster en het statusscherm. Donkere vormgeving met amber als focuskleur.
 - **`MainActivity.kt`:** de ViewModel met de status van de gids, het laden van de cache en het automatisch verversen.
 - **`KoppelenTest.kt`:** unit tests die controleren dat namen goed genormaliseerd worden, dat twee zenders niet naar dezelfde naam luisteren, dat zendersleutels uniek zijn en dat XMLTV-tijden juist omgezet worden, ook zonder tijdzone.

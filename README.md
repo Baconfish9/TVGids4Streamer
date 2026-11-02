@@ -26,8 +26,10 @@ Werkt ook op Android-telefoons en -tablets, in liggende stand.
 
 ## Functies
 
-- **Tijdlijn van 30 uur** vanaf twee uur geleden, met een rode lijn op het huidige tijdstip
-  en een voortgangsbalk onder elk programma dat nu loopt.
+- **Tijdlijn tot een week terug** en een dag vooruit, met een rode lijn op het huidige tijdstip
+  en een voortgangsbalk onder elk programma dat nu loopt. De bronnen beginnen pas om
+  middernacht; wat de app eerder ophaalde blijft daarom 7 dagen bewaard, zodat je ook
+  oudere programma's kan opzoeken om terug te kijken.
 - **Gemaakt voor de afstandsbediening**: de tijdlijn schuift mee terwijl je bladert. Titels
   van lange programma's blijven zichtbaar aan de linkerrand en heel korte opvullers worden
   overgeslagen.
