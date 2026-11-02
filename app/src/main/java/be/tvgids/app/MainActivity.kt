@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -126,6 +127,8 @@ fun App(vm: GidsViewModel) {
             Modifier
                 .fillMaxSize()
                 .background(Kleuren.achtergrond)
+                // Onthoudt de pijltjestoets voor het navigatiegeluid (zie Geluid).
+                .onPreviewKeyEvent { Geluid.toets(it); false }
                 // Weg van statusbalk, navigatiebalk en camera-uitsparing (op TV is dit 0).
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {

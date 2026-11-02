@@ -70,6 +70,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -779,6 +780,7 @@ private fun ProgrammaBlok(
     modifier: Modifier,
 ) {
     var focus by remember { mutableStateOf(false) }
+    val view = LocalView.current
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusVerzoek) {
         if (focusVerzoek >= 0) runCatching { focusRequester.requestFocus() }
@@ -801,12 +803,18 @@ private fun ProgrammaBlok(
             .focusRequester(focusRequester)
             .onFocusChanged {
                 focus = it.isFocused
-                if (it.isFocused) onFocus()
+                if (it.isFocused) {
+                    Geluid.focus(view)
+                    onFocus()
+                }
             }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onKlik,
+                onClick = {
+                    Geluid.klik(view)
+                    onKlik()
+                },
             )
             .clip(RoundedCornerShape(7.dp))
             .background(achtergrond)
@@ -862,6 +870,7 @@ fun TvKnop(
     onClick: () -> Unit,
 ) {
     var focus by remember { mutableStateOf(false) }
+    val view = LocalView.current
     val achtergrond = when {
         focus -> Kleuren.focus
         actief -> Kleuren.actief
@@ -870,11 +879,17 @@ fun TvKnop(
     Box(
         modifier
             .padding(horizontal = 4.dp)
-            .onFocusChanged { focus = it.isFocused }
+            .onFocusChanged {
+                focus = it.isFocused
+                if (it.isFocused) Geluid.focus(view)
+            }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
+                onClick = {
+                    Geluid.klik(view)
+                    onClick()
+                },
             )
             .clip(RoundedCornerShape(20.dp))
             .background(achtergrond)
@@ -923,6 +938,8 @@ private fun DetailKaart(p: Programma, nu: Long, onSluit: () -> Unit) {
         Modifier
             .widthIn(max = 640.dp)
             .fillMaxWidth()
+            // Een Dialog is een apart venster: de toetsen komen niet langs App.
+            .onPreviewKeyEvent { Geluid.toets(it); false }
             .clip(RoundedCornerShape(16.dp))
             .background(Kleuren.paneel)
             .border(1.dp, Kleuren.knop, RoundedCornerShape(16.dp))
@@ -1053,10 +1070,14 @@ private fun Sectie(titel: String) {
 @Composable
 private fun Regel(titel: String, detail: String, detailKleur: Color) {
     var focus by remember { mutableStateOf(false) }
+    val view = LocalView.current
     Row(
         Modifier
             .fillMaxWidth()
-            .onFocusChanged { focus = it.isFocused }
+            .onFocusChanged {
+                focus = it.isFocused
+                if (it.isFocused) Geluid.focus(view)
+            }
             .focusable()
             .clip(RoundedCornerShape(6.dp))
             .background(if (focus) Kleuren.knop else Color.Transparent)
