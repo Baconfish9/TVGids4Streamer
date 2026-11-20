@@ -26,13 +26,15 @@ Werkt ook op Android-telefoons en -tablets, in liggende stand.
 
 ## Functies
 
-- **Tijdlijn tot een week terug** en een dag vooruit, met een rode lijn op het huidige tijdstip
-  en een voortgangsbalk onder elk programma dat nu loopt. De bronnen beginnen pas om
+- **Tijdlijn tot een week terug** en een dag vooruit, met een rode lijn en een label **NU** op het
+  huidige tijdstip en een voortgangsbalk onder elk programma dat nu loopt. De bronnen beginnen pas om
   middernacht; wat de app eerder ophaalde blijft daarom 7 dagen bewaard, zodat je ook
   oudere programma's kan opzoeken om terug te kijken.
 - **Gemaakt voor de afstandsbediening**: de tijdlijn schuift mee terwijl je bladert. Titels
   van lange programma's blijven zichtbaar aan de linkerrand en heel korte opvullers worden
-  overgeslagen.
+  overgeslagen. Scroll je weg van het huidige uur, dan wijst **← NU** of **NU →** aan de rand
+  de weg terug, en brengt de knop **Nu** bovenaan je er meteen naartoe (die is gedimd zolang
+  de rode lijn in beeld staat).
 - **Ook op telefoon en tablet** (liggend): vegen door de tijdlijn, tikken voor details en
   een knop **Nu** om terug te springen. Hou je het toestel rechtop, dan vraagt een
   animatie om het te draaien. Op een telefoon verdwijnt het infopaneel om plaats te sparen.
@@ -100,7 +102,8 @@ manier; ze komt gewoon over de vorige.
 |---|---|
 | Pijltjes | Door zenders en tijd bladeren |
 | OK | Details van het programma |
-| Omhoog vanaf de eerste zender | Naar de knoppen **Vernieuwen** en **Status** |
+| Omhoog vanaf de eerste zender | Naar de knoppen **Nu**, **Vernieuwen** en **Status** |
+| **Nu** | Terug naar het huidige uur, met de focus op wat nu loopt op dezelfde zender |
 | Terug | Detailvenster of statusscherm sluiten |
 
 Op een telefoon of tablet veeg je horizontaal door de tijd en verticaal door de zenders.
@@ -157,26 +160,42 @@ Open de map in Android Studio, laat Gradle synchroniseren en kies **Build > Buil
 Bundle(s) / APK(s) > Build APK(s)**. Of vanaf de commandolijn, met Gradle 9.6.0:
 
 ```sh
-gradle assembleRelease       # APK in app/build/outputs/apk/release/
+gradle assembleDebug         # APK in app/build/outputs/apk/debug/
 gradle testDebugUnitTest     # unit tests
 ```
 
-> **Let op:** een lokale build heeft versie 1 en installeert dus niet over een build van
-> GitHub. De-installeer eerst, of gebruik voor een debug-build `adb install -r -d`.
+> **Let op:** een lokale build is ondertekend met de debugsleutel van je eigen Android Studio
+> en installeert dus niet over een build van GitHub. De-installeer eerst.
 
 ### Ondertekening
 
 Er zijn twee sporen:
 
-- **De APK op GitHub** (om zelf te installeren) wordt ondertekend met
-  `app/tvgids-debug.keystore`, die bewust in de repository staat. Zo heeft elke build dezelfde
-  handtekening en installeert hij over de vorige.
+- **De APK op GitHub** (om zelf te installeren) wordt ondertekend met een vaste APK-sleutel
+  die enkel als secret in GitHub staat. Zo heeft elke build dezelfde handtekening en
+  installeert hij over de vorige, zonder dat iemand anders een "update" kan namaken.
 - **De App Bundle (AAB) voor de Play Store** wordt ondertekend met een aparte uploadsleutel
   die nooit in de repository komt. GitHub Actions bouwt die AAB alleen als de sleutel als
   secret is ingesteld, en zet hem bij de workflow-run als download `TVGids-playstore-aab`.
 
 De twee versies hebben een andere handtekening. Wie van de GitHub-APK naar de Play
 Store-versie overstapt, moet de app dus eerst één keer de-installeren.
+
+> Tot november 2026 stond er een testsleutel in de repository. APK's van vóór die wissel
+> installeren niet als update: de-installeer de oude app één keer.
+
+#### APK-sleutel instellen (eenmalig)
+
+Zonder deze sleutel mislukt de build op GitHub. Bewaar het bestand en het wachtwoord goed:
+verlies je ze, dan moet iedereen de app opnieuw de-installeren.
+
+```sh
+keytool -genkeypair -v -keystore ~/tvgids-apk.jks -storetype PKCS12 -alias tvgids-apk \
+  -keyalg RSA -keysize 4096 -validity 10000
+base64 -i ~/tvgids-apk.jks | gh secret set APK_KEYSTORE_BASE64
+gh secret set APK_KEYSTORE_PASSWORD   # vraagt het wachtwoord van de keystore
+gh secret set APK_KEY_ALIAS --body tvgids-apk
+```
 
 #### Uploadsleutel instellen (eenmalig)
 

@@ -25,15 +25,18 @@ android {
     // Uploadsleutel voor de Play Store. Die staat nooit in de repository: GitHub Actions
     // zet hem vanuit de secrets klaar en geeft het pad door via UPLOAD_KEYSTORE.
     val uploadSleutel = System.getenv("UPLOAD_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    // Vaste sleutel voor de APK op GitHub, zodat elke versie als update over de vorige
+    // installeert. Ook die staat enkel in de secrets en komt via APK_KEYSTORE binnen.
+    val apkSleutel = System.getenv("APK_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
 
     signingConfigs {
-        // Vaste testsleutel, zodat elke APK van GitHub als update over de vorige
-        // geïnstalleerd kan worden. Niet gebruiken voor de Play Store.
-        create("gedeeld") {
-            storeFile = file("tvgids-debug.keystore")
-            storePassword = "tvgids"
-            keyAlias = "tvgids"
-            keyPassword = "tvgids"
+        if (apkSleutel != null) {
+            create("apk") {
+                storeFile = apkSleutel
+                storePassword = System.getenv("APK_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("APK_KEY_ALIAS")
+                keyPassword = System.getenv("APK_KEYSTORE_PASSWORD")
+            }
         }
         if (uploadSleutel != null) {
             create("upload") {
@@ -45,17 +48,19 @@ android {
         }
     }
 
+    // Debug-builds gebruiken de standaard debugsleutel van Android Studio.
     buildTypes {
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("gedeeld")
-        }
         getByName("release") {
             // R8: kleinere app en moeilijker te ontleden code.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Met uploadsleutel (Play Store) of anders de gedeelde testsleutel.
-            signingConfig = signingConfigs.getByName(if (uploadSleutel != null) "upload" else "gedeeld")
+            // Uploadsleutel (Play Store), anders de APK-sleutel; lokaal blijft de release ongetekend.
+            signingConfig = when {
+                uploadSleutel != null -> signingConfigs.getByName("upload")
+                apkSleutel != null -> signingConfigs.getByName("apk")
+                else -> null
+            }
         }
     }
 

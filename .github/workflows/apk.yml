@@ -30,8 +30,22 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
+      # Ondertekend met de vaste APK-sleutel uit de secrets, zodat elke versie
+      # als update over de vorige installeert.
       - name: APK bouwen
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
         run: |
+          if [ -z "$APK_KEYSTORE_BASE64" ]; then
+            echo "FOUT: de secret APK_KEYSTORE_BASE64 ontbreekt (zie README, APK-sleutel instellen)."
+            exit 1
+          fi
+          export APK_KEYSTORE="$RUNNER_TEMP/apk.jks"
+          # Sleutel altijd opruimen, ook als de build mislukt.
+          trap 'rm -f "$APK_KEYSTORE"' EXIT
+          echo "$APK_KEYSTORE_BASE64" | base64 -d > "$APK_KEYSTORE"
           INST=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
           if [ -z "$INST" ]; then
             echo "FOUT: settings.gradle.kts niet gevonden. Upload de volledige inhoud van de zip."

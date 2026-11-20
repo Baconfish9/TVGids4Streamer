@@ -76,7 +76,7 @@ app/src/test/java/be/tvgids/app/   Unit tests
 
 - Elke push naar `main` start de GitHub Actions-workflow **APK bouwen**. Die draait de unit tests, bouwt de APK en publiceert hem als release `latest`. Het versienummer is `1.0.<buildnummer>`.
 - Vaste downloadlink: `https://github.com/Baconfish9/TVGids4Streamer/releases/latest/download/TVGids.apk`
-- De APK wordt ondertekend met `app/tvgids-debug.keystore`, die bewust in de repository staat, zodat elke nieuwe versie over de vorige installeert. Voor een publicatie in de Play Store is die sleutel niet geschikt.
+- De APK op GitHub wordt ondertekend met een vaste APK-sleutel die enkel als secret in GitHub staat (`APK_KEYSTORE_BASE64`, `APK_KEYSTORE_PASSWORD`, `APK_KEY_ALIAS`), zodat elke nieuwe versie over de vorige installeert. De Play Store-versie gebruikt een aparte uploadsleutel.
 - Installeren op de Streamer kan met de app Downloader of met ADB (draadloze foutopsporing).
 - Een lokale build heeft versie 1 en installeert dus niet over een build van GitHub zonder eerst te de-installeren.
 
