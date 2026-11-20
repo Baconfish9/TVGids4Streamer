@@ -16,12 +16,15 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.cert.CertPathValidatorException
+import java.security.cert.CertificateException
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.TreeSet
 import java.util.zip.GZIPInputStream
+import javax.net.ssl.SSLHandshakeException
 
 const val MIN = 60_000L
 const val UUR = 60 * MIN
@@ -36,12 +39,16 @@ data class Programma(
     val subtitel: String?,
     val beschrijving: String?,
     val categorie: String?,
+    /** Grijs blok voor een gat zonder gegevens; enkel in het raster, nooit in de cache. */
+    val opvulling: Boolean = false,
 )
 
 data class BronStatus(
     val url: String,
     val ok: Boolean,
     val melding: String,
+    /** De fout wijst op een verkeerde klok van het toestel (niet bewaard in de cache). */
+    val klokFout: Boolean = false,
 )
 
 data class EpgResultaat(
@@ -72,9 +79,27 @@ private fun kort(ms: Long): String =
 
 fun ParseInfo.samenvatting(): String {
     val periode = if (programmas > 0) " Gegevens van ${kort(vroegste)} tot ${kort(laatste)}." else ""
+    // Wel programma's, maar geen enkel rond "nu": dan klopt de klok van het toestel meestal niet.
+    val klok = if (buitenVenster) " Controleer de datum en tijd van het toestel." else ""
     return "$gekoppeld van $zenders zenders gekoppeld. $programmas programma's in bron, " +
-        "$voorGekoppeld voor onze zenders, waarvan $inVenster binnen de gids.$periode"
+        "$voorGekoppeld voor onze zenders, waarvan $inVenster binnen de gids.$periode$klok"
 }
+
+/**
+ * Maakt van een fout bij het ophalen een melding voor het statusscherm. Een geweigerd
+ * certificaat ("Chain validation failed") komt bijna altijd door een verkeerde klok:
+ * het toestel vindt het certificaat dan nog niet of niet meer geldig.
+ */
+fun foutMelding(e: Throwable): String =
+    if (isCertificaatFout(e)) "Beveiligde verbinding geweigerd. Controleer de datum en tijd van het toestel."
+    else e.message ?: e.javaClass.simpleName
+
+fun isCertificaatFout(e: Throwable): Boolean =
+    e is SSLHandshakeException ||
+        generateSequence(e) { it.cause }.any { it is CertificateException || it is CertPathValidatorException }
+
+/** Wel programma's voor onze zenders, maar geen enkel rond "nu". */
+val ParseInfo.buitenVenster: Boolean get() = voorGekoppeld > 0 && inVenster == 0
 
 // ---------------------------------------------------------------------------
 // XMLTV-parser (streaming, zodat grote bestanden geen geheugenproblemen geven)
@@ -274,10 +299,10 @@ class EpgRepository(context: Context) {
                 val status = try {
                     open(url).use { ins ->
                         val info = XmltvParser.parse(ins, this@EpgRepository::koppel, vanaf, tot, progs, nietHier)
-                        BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, info.samenvatting())
+                        BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, info.samenvatting(), info.buitenVenster)
                     }
                 } catch (e: Exception) {
-                    BronStatus(url, false, e.message ?: e.javaClass.simpleName)
+                    BronStatus(url, false, foutMelding(e), isCertificaatFout(e))
                 }
                 Triple(progs, nietHier, status)
             }

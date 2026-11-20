@@ -86,7 +86,12 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     laden = false,
                     resultaat = r,
-                    fout = if (leeg) "Geen programma's gevonden. Open Status om de bronnen te controleren." else null,
+                    fout = when {
+                        !leeg -> null
+                        r.bronnen.any { b -> b.klokFout } ->
+                            "Geen programma's: de datum en tijd van dit toestel lijken niet te kloppen. Zet ze juist en vernieuw."
+                        else -> "Geen programma's gevonden. Open Status om de bronnen te controleren."
+                    },
                 )
             }
         } catch (e: Exception) {

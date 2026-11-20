@@ -71,6 +71,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -101,6 +102,7 @@ object Kleuren {
     val paneel = Color(0xFF172131)
     val blok = Color(0xFF1F2B3E)
     val blokVoorbij = Color(0xFF162030)
+    val opvulling = Color(0xFF131B28)
     val live = Color(0xFF2C3D5A)
     val focus = Color(0xFFFFC857)
     val opFocus = Color(0xFF1A1405)
@@ -161,6 +163,30 @@ internal fun dagNaam(ms: Long, nu: Long): String {
 private fun halfUurOmlaag(ms: Long): Long = ms - (ms % (30 * MIN))
 
 private fun zenderVan(key: String): ZenderDef? = Config.ZENDERS.firstOrNull { it.key == key }
+
+/** Gaten korter dan dit blijven gewoon leeg. */
+private const val MIN_GAT = 5 * MIN
+
+/**
+ * Vult de gaten in een rij (ook voor het eerste en na het laatste programma) met
+ * grijze blokken, zodat omhoog en omlaag op hetzelfde tijdstip blijven in plaats
+ * van naar het eerste programma van die zender te springen.
+ */
+internal fun metOpvulling(rij: List<Programma>, zenderKey: String, van: Long, tot: Long): List<Programma> {
+    if (rij.isEmpty()) return rij
+    val uit = ArrayList<Programma>(rij.size + 4)
+    fun gat(s: Long, e: Long) {
+        if (e - s >= MIN_GAT) uit.add(Programma(zenderKey, s, e, "Geen uitzending", null, null, null, opvulling = true))
+    }
+    var vorige = van
+    for (p in rij) {
+        gat(vorige, p.start)
+        uit.add(p)
+        vorige = max(vorige, p.stop)
+    }
+    gat(vorige, tot)
+    return uit
+}
 
 // ---------------------------------------------------------------------------
 // Hoofdscherm
@@ -224,7 +250,8 @@ fun GidsScherm(
     // Programma's per zender die binnen het raster vallen (zelfde volgorde als de rijen).
     val perRij = remember(res, rasterStart, zenders) {
         zenders.map { z ->
-            res?.programmas?.get(z.key).orEmpty().filter { it.stop > rasterStart && it.start < rasterEind }
+            val rij = res?.programmas?.get(z.key).orEmpty().filter { it.stop > rasterStart && it.start < rasterEind }
+            metOpvulling(rij, z.key, rasterStart, rasterEind)
         }
     }
 
@@ -316,7 +343,7 @@ fun GidsScherm(
         val t = System.currentTimeMillis()
         val rijIndex = zenders.indexOfFirst { it.key == doelZender }
         val terug = perRij.getOrNull(rijIndex)?.let { rij -> rij.firstOrNull { it.start == doelStart } ?: rondAnker(rij) }
-        val nieuw = terug ?: perRij.firstNotNullOfOrNull { rij -> rij.firstOrNull { it.start <= t && it.stop > t } }
+        val nieuw = terug ?: perRij.firstNotNullOfOrNull { rij -> rij.firstOrNull { !it.opvulling && it.start <= t && it.stop > t } }
         when {
             nieuw == null -> if (!geplaatst) runCatching { focusKnop.requestFocus() }
             // Focus staat op een knop of in het detailvenster: niet afpakken,
@@ -530,7 +557,7 @@ fun GidsScherm(
                                     },
                                     onKlik = { p ->
                                         kies(p)
-                                        detail = p
+                                        if (!p.opvulling) detail = p
                                     },
                                 )
                             }
@@ -642,7 +669,7 @@ private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState, touch: Boolean
             )
         } else {
             val zender = zenderVan(p.zenderKey)
-            val live = nu >= p.start && nu < p.stop
+            val live = !p.opvulling && nu >= p.start && nu < p.stop
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(zender?.naam ?: "", color = Color(zender?.kleur ?: 0xFFFFFFFF), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(12.dp))
@@ -803,17 +830,18 @@ private fun ProgrammaBlok(
     LaunchedEffect(focusVerzoek) {
         if (focusVerzoek >= 0) runCatching { focusRequester.requestFocus() }
     }
-    val live = nu >= p.start && nu < p.stop
+    val live = !p.opvulling && nu >= p.start && nu < p.stop
     val voorbij = p.stop <= nu
     val achtergrond = when {
         focus -> Kleuren.focus
+        p.opvulling -> Kleuren.opvulling
         live -> Kleuren.live
         voorbij -> Kleuren.blokVoorbij
         else -> Kleuren.blok
     }
     val tekstKleur = when {
         focus -> Kleuren.opFocus
-        voorbij -> Kleuren.tekstZacht
+        voorbij || p.opvulling -> Kleuren.tekstZacht
         else -> Kleuren.tekst
     }
     Box(
@@ -867,15 +895,18 @@ private fun ProgrammaBlok(
                 color = tekstKleur,
                 fontSize = 15.sp,
                 fontWeight = if (focus || live) FontWeight.Bold else FontWeight.Medium,
+                fontStyle = if (p.opvulling) FontStyle.Italic else FontStyle.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                uurMin(p.start),
-                color = if (focus) Kleuren.opFocus.copy(alpha = 0.75f) else Kleuren.tekstZacht,
-                fontSize = 12.sp,
-                maxLines = 1,
-            )
+            if (!p.opvulling) {
+                Text(
+                    uurMin(p.start),
+                    color = if (focus) Kleuren.opFocus.copy(alpha = 0.75f) else Kleuren.tekstZacht,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
