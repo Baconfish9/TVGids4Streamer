@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- WorkManager (nachtelijke verversing) draait nooit als voorgrondservice: weg ermee,
+         anders vraagt de Play Store uitleg over een voorgronddienst die er niet is. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
 
     <!-- Nodig om op Google TV in de app-lijst te verschijnen -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -24,6 +28,10 @@
         android:label="@string/app_name"
         android:supportsRtl="false"
         android:theme="@style/Theme.TVGids">
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            tools:node="remove" />
 
         <activity
             android:name=".MainActivity"

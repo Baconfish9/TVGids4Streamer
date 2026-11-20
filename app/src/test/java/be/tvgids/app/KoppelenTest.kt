@@ -32,6 +32,18 @@ class KoppelenTest {
     }
 
     @Test
+    fun zendersUitDeReservebronWordenHerkend() {
+        // Zo heten ze bij epgshare01, met punten in plaats van spaties.
+        val sleutels = Config.ZENDERS.flatMap { z -> (z.aliassen + z.naam).map { normaliseer(it) to z.key } }.toMap()
+        val verwacht = mapOf(
+            "VRT.1.be" to "vrt1", "EEN.be" to "vrt1", "VRT.Canvas.HD.be" to "canvas", "KETNET.be" to "ketnet",
+            "VTM.HD.be" to "vtm", "VTM.2.be" to "vtm2", "VTM.GOLD.be" to "vtmgold", "Play.Actie.be" to "playactie",
+            "NPO.1.HD.be" to "npo1", "NPO.3.nl" to "npo3",
+        )
+        for ((id, key) in verwacht) assertEquals(id, key, sleutels[normaliseer(id)])
+    }
+
+    @Test
     fun zenderSleutelsZijnUniek() {
         val keys = Config.ZENDERS.map { it.key }
         assertEquals(keys.size, keys.toSet().size)

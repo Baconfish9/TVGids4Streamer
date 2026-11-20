@@ -41,18 +41,32 @@ data class GidsState(
     val laden: Boolean = true,
     val fout: String? = null,
     val resultaat: EpgResultaat? = null,
+    /** Er is wel een gids, maar ze kon niet ververst worden. */
+    val waarschuwing: String? = null,
+    val zenders: ZenderInstelling = ZenderInstelling(ZenderInstelling.STANDAARD, emptySet()),
+    /** Of de tip over lang indrukken nog getoond moet worden. */
+    val toonTip: Boolean = false,
 )
 
-class GidsViewModel(app: Application) : AndroidViewModel(app) {
+class GidsViewModel(app: Application) : AndroidViewModel(app), ZenderActies {
 
     private val repo = EpgRepository(app)
-    private val _state = MutableStateFlow(GidsState())
+    private val voorkeuren = ZenderVoorkeuren(app)
+    private val _state = MutableStateFlow(GidsState(zenders = voorkeuren.laad(), toonTip = !voorkeuren.tipGezien))
     val state: StateFlow<GidsState> = _state.asStateFlow()
     private var bezig = false
+    /** Tijdstip van de cache die nu getoond wordt, om een nieuwere te herkennen. */
+    private var cacheTijd = 0L
 
     private val cacheGeladen = viewModelScope.launch {
+        cacheTijd = repo.cacheTijd()
         val cache = repo.laadCache()
         if (cache != null) _state.update { it.copy(resultaat = cache, laden = false) }
+    }
+
+    init {
+        // Klopt de klok van het toestel niet, dan weten we dat best voor de gids getekend wordt.
+        viewModelScope.launch { repo.meetKlok() }
     }
 
     /**
@@ -63,16 +77,49 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun bewaak() {
         cacheGeladen.join()
         while (true) {
+            herlaadCache()
             if (verouderd(_state.value.resultaat)) vernieuw()
             delay(15 * MIN)
         }
     }
 
     private fun verouderd(r: EpgResultaat?): Boolean =
-        r == null || System.currentTimeMillis() - r.opgehaald > 6 * UUR
+        r == null || Klok.nu() - r.opgehaald > 6 * UUR
+
+    /** Neemt een gids over die de achtergrondtaak intussen ophaalde. */
+    private suspend fun herlaadCache() {
+        val t = repo.cacheTijd()
+        if (bezig || t <= cacheTijd) return
+        val cache = repo.laadCache() ?: return
+        cacheTijd = t
+        _state.update { it.copy(resultaat = cache, laden = false, fout = null, waarschuwing = null) }
+    }
 
     fun vernieuw() {
         viewModelScope.launch { vernieuwNu() }
+    }
+
+    private fun wijzigZenders(nieuw: (ZenderInstelling) -> ZenderInstelling) {
+        val z = nieuw(_state.value.zenders)
+        voorkeuren.bewaar(z)
+        _state.update { it.copy(zenders = z) }
+    }
+
+    override fun verplaatsZender(key: String, stap: Int) = wijzigZenders { it.verplaats(key, stap) }
+
+    override fun verbergZender(key: String) = wijzigZenders { it.copy(verborgen = it.verborgen + key) }
+
+    override fun toonZender(key: String) {
+        wijzigZenders { it.copy(verborgen = it.verborgen - key) }
+        // Zat de zender enkel in een reservebron, dan werd die voor hem niet opgehaald.
+        if (_state.value.resultaat?.programmas?.get(key).isNullOrEmpty()) vernieuw()
+    }
+
+    override fun toonAlleZenders() = wijzigZenders { it.copy(verborgen = emptySet()) }
+
+    override fun tipGezien() {
+        voorkeuren.tipGezien = true
+        _state.update { it.copy(toonTip = false) }
     }
 
     private suspend fun vernieuwNu() {
@@ -80,12 +127,15 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
         bezig = true
         _state.update { it.copy(laden = true, fout = null) }
         try {
-            val r = repo.haalOp(_state.value.resultaat)
+            val r = repo.haalOp()
+            cacheTijd = repo.cacheTijd()
             val leeg = r.programmas.values.all { it.isEmpty() }
+            val onbereikbaar = r.bronnen.none { it.ok }
             _state.update {
                 it.copy(
                     laden = false,
                     resultaat = r,
+                    waarschuwing = if (!leeg && onbereikbaar) "Vernieuwen mislukt, gids van ${dagNaam(r.opgehaald, Klok.nu()).lowercase()} ${uurMin(r.opgehaald)}" else null,
                     fout = when {
                         !leeg -> null
                         r.bronnen.any { b -> b.klokFout } ->
@@ -95,7 +145,13 @@ class GidsViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         } catch (e: Exception) {
-            _state.update { it.copy(laden = false, fout = "Vernieuwen mislukt: ${e.message ?: "onbekende fout"}") }
+            _state.update {
+                it.copy(
+                    laden = false,
+                    fout = "Vernieuwen mislukt: ${e.message ?: "onbekende fout"}",
+                    waarschuwing = if (it.resultaat != null) "Vernieuwen mislukt" else null,
+                )
+            }
         } finally {
             bezig = false
         }
@@ -113,6 +169,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        VernieuwWerker.plan(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) { vm.bewaak() }
         }
@@ -148,6 +205,7 @@ fun App(vm: GidsViewModel) {
                         state = state,
                         onVernieuw = { vm.vernieuw() },
                         onStatus = { toonStatus = true },
+                        zenderActies = vm,
                     )
                 }
             }

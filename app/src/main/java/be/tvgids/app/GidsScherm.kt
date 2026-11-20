@@ -11,12 +11,15 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +43,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -62,6 +66,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -88,7 +94,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -197,26 +202,33 @@ fun GidsScherm(
     state: GidsState,
     onVernieuw: () -> Unit,
     onStatus: () -> Unit,
+    zenderActies: ZenderActies,
 ) {
-    val nu by produceState(System.currentTimeMillis()) {
+    // Verandert als blijkt dat de klok van het toestel niet klopt; dan schuift alles mee.
+    val afwijking by Klok.afwijking.collectAsState()
+    val nu by produceState(Klok.nu(), afwijking) {
+        value = Klok.nu()
         while (true) {
             delay(20_000)
-            value = System.currentTimeMillis()
+            value = Klok.nu()
         }
     }
     val res = state.resultaat
     // Het raster begint bij het oudste bewaarde programma (hoogstens een week
     // terug), zodat je ook voorbije programma's kan opzoeken om terug te kijken.
-    val rasterEind = remember(res?.opgehaald) { halfUurOmlaag(System.currentTimeMillis() - 2 * UUR) + RASTER_UREN * UUR }
-    val rasterStart = remember(res?.opgehaald) {
-        val t = System.currentTimeMillis()
+    val rasterEind = remember(res?.opgehaald, afwijking) { halfUurOmlaag(Klok.nu() - 2 * UUR) + RASTER_UREN * UUR }
+    val rasterStart = remember(res?.opgehaald, afwijking) {
+        val t = Klok.nu()
         val vroegste = res?.programmas?.values?.mapNotNull { it.firstOrNull()?.start }?.minOrNull() ?: t
         halfUurOmlaag(max(vroegste, t - GESCHIEDENIS).coerceAtMost(t - 2 * UUR))
     }
     val halfUren = ((rasterEind - rasterStart) / (30 * MIN)).toInt()
     val totaalMin = (halfUren * 30).toFloat()
-    // Alle zenders in één lijst: eerst de Vlaamse, dan de Nederlandse.
-    val zenders = remember { Config.ZENDERS.sortedBy { it.land.ordinal } }
+    // De zichtbare zenders, in de volgorde die je zelf koos (standaard eerst de Vlaamse).
+    val zenders = remember(state.zenders) { state.zenders.zichtbaar.mapNotNull { zenderVan(it) } }
+    // Zender waarvan het menu open staat (OK lang ingedrukt), en de zender die je verplaatst.
+    var menuZender by remember { mutableStateOf<String?>(null) }
+    var verplaatst by remember { mutableStateOf<String?>(null) }
 
     var gefocust by remember { mutableStateOf<Programma?>(null) }
     var detail by remember { mutableStateOf<Programma?>(null) }
@@ -224,7 +236,7 @@ fun GidsScherm(
     // niet verspringt wanneer het raster na een verversing opschuift.
     val oorsprong = rememberSaveable { rasterStart }
     var beeldMin by rememberSaveable {
-        mutableFloatStateOf(max(0f, (System.currentTimeMillis() - oorsprong) / MIN.toFloat() - 30f))
+        mutableFloatStateOf(max(0f, (Klok.nu() - oorsprong) / MIN.toFloat() - 30f))
     }
     // Tijdens het vegen volgt de tijdlijn de vinger meteen, zonder na te ijlen.
     var vegen by remember { mutableStateOf(false) }
@@ -240,6 +252,7 @@ fun GidsScherm(
     val pxPerMin = with(LocalDensity.current) { DP_PER_MIN.toPx() }
 
     val context = LocalContext.current
+    val view = LocalView.current
     // Telefoon of tablet (geen Android TV): bedienen met de vinger.
     val touch = remember { !context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) }
 
@@ -265,23 +278,29 @@ fun GidsScherm(
     var doelStart by rememberSaveable { mutableLongStateOf(0L) }
     // Tijdstip waarrond omhoog/omlaag een programma gezocht wordt, zodat je
     // bij verticaal bladeren niet stilaan naar links of rechts afdrijft.
-    var ankerTijd by rememberSaveable { mutableLongStateOf(System.currentTimeMillis()) }
+    var ankerTijd by rememberSaveable { mutableLongStateOf(Klok.nu()) }
     var ankerVast by remember { mutableStateOf(false) }
     // Of de focus in het raster staat (en dus niet op een knop bovenaan).
     var rasterFocus by remember { mutableStateOf(false) }
     // Of de focus sinds het openen van dit scherm al eens geplaatst werd.
     var geplaatst by remember { mutableStateOf(false) }
+    // Na het verbergen van een zender moet de focus naar de buurzender, ook vanuit het menu.
+    var herplaats by remember { mutableStateOf(false) }
+    // Laatste zender die vanuit het menu weer zichtbaar werd: daar gaat de focus heen.
+    var teruggezet by remember { mutableStateOf<String?>(null) }
+    // OK werd lang ingedrukt: de klik bij het loslaten negeren.
+    var langIngedrukt by remember { mutableStateOf(false) }
     // Wanneer de app naar de achtergrond ging, en een teller die de plaatsing
     // opnieuw laat lopen als je na een tijd terugkeert.
     var wegSinds by rememberSaveable { mutableLongStateOf(0L) }
     var terugkeer by remember { mutableIntStateOf(0) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
-        wegSinds = System.currentTimeMillis()
+        wegSinds = Klok.nu()
     }
     // Lang weg geweest (bv. een programma bekeken): terug naar "nu" op dezelfde zender.
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        val t = System.currentTimeMillis()
+        val t = Klok.nu()
         if (wegSinds > 0 && t - wegSinds >= TERUGZETTEN_NA) {
             detail = null
             ankerTijd = t
@@ -291,6 +310,18 @@ fun GidsScherm(
             terugkeer++
         }
         wegSinds = 0L
+    }
+    // Pas gemerkt dat de klok van het toestel verkeerd staat: naar het echte "nu".
+    var vorigeAfwijking by remember { mutableLongStateOf(afwijking) }
+    LaunchedEffect(afwijking) {
+        if (afwijking == vorigeAfwijking) return@LaunchedEffect
+        vorigeAfwijking = afwijking
+        val t = Klok.nu()
+        ankerTijd = t
+        doelStart = 0L
+        beeldMin = max(0f, (t - oorsprong) / MIN.toFloat() - 30f)
+        geplaatst = false
+        terugkeer++
     }
 
     fun geefFocus(p: Programma) {
@@ -324,31 +355,26 @@ fun GidsScherm(
         }
     }
 
-    // Heel korte opvullers (Keno, Lotto, ...) zijn amper zichtbaar; die slaan we
-    // over bij het navigeren, behalve het blok waar de focus nu op staat.
-    fun navigeerbaar(rij: List<Programma>, huidig: Programma?): List<Programma> =
-        rij.filter { it == huidig || it.stop - it.start >= 5 * MIN }.ifEmpty { rij }
-
-    // Kiest het programma in een rij dat het ankertijdstip bevat, of anders het dichtstbijzijnde.
-    fun rondAnker(alles: List<Programma>): Programma? {
-        val rij = navigeerbaar(alles, null)
-        return rij.firstOrNull { it.start <= ankerTijd && it.stop > ankerTijd }
-            ?: rij.minByOrNull { min(abs(it.start - ankerTijd), abs(it.stop - ankerTijd)) }
-    }
-
     // Bij nieuwe gegevens (eerste keer, na een verversing of terug van het
     // statusscherm) het vorige programma terugzoeken; anders het eerste live-programma.
     LaunchedEffect(perRij, terugkeer) {
         delay(150)
-        val t = System.currentTimeMillis()
+        val t = Klok.nu()
         val rijIndex = zenders.indexOfFirst { it.key == doelZender }
-        val terug = perRij.getOrNull(rijIndex)?.let { rij -> rij.firstOrNull { it.start == doelStart } ?: rondAnker(rij) }
+        val terug = perRij.getOrNull(rijIndex)?.let { rij -> rij.firstOrNull { it.start == doelStart } ?: rondAnker(rij, ankerTijd) }
         val nieuw = terug ?: perRij.firstNotNullOfOrNull { rij -> rij.firstOrNull { !it.opvulling && it.start <= t && it.stop > t } }
+        val moetFocus = herplaats
+        herplaats = false
         when {
             nieuw == null -> if (!geplaatst) runCatching { focusKnop.requestFocus() }
-            // Focus staat op een knop of in het detailvenster: niet afpakken,
+            // Een zender werd verborgen: de focus naar de buurzender, ook al stond het menu open.
+            moetFocus -> {
+                toonRij(zenders.indexOfFirst { it.key == nieuw.zenderKey })
+                geefFocus(nieuw)
+            }
+            // Focus staat op een knop of in een venster: niet afpakken,
             // maar wel klaarzetten voor wanneer je terug naar het raster gaat.
-            geplaatst && (!rasterFocus || detail != null) -> {
+            geplaatst && (!rasterFocus || detail != null || menuZender != null) -> {
                 doel = nieuw
                 gefocust = nieuw
             }
@@ -373,17 +399,13 @@ fun GidsScherm(
         if (rij < 0) return false
         when (key) {
             Key.DirectionLeft, Key.DirectionRight -> {
-                val progs = navigeerbaar(perRij[rij], p)
-                val i = progs.indexOf(p)
-                val nieuw = progs.getOrNull(if (key == Key.DirectionLeft) i - 1 else i + 1) ?: return true
+                val nieuw = naastLiggend(perRij[rij], p, if (key == Key.DirectionLeft) -1 else 1) ?: return true
                 geefFocus(nieuw)
             }
             Key.DirectionUp, Key.DirectionDown -> {
-                val stap = if (key == Key.DirectionUp) -1 else 1
-                var r = rij + stap
-                while (r in perRij.indices && perRij[r].isEmpty()) r += stap
-                if (r !in perRij.indices) return key == Key.DirectionDown
-                val nieuw = rondAnker(perRij[r]) ?: return true
+                val r = volgendeRij(perRij, rij, if (key == Key.DirectionUp) -1 else 1)
+                    ?: return key == Key.DirectionDown
+                val nieuw = rondAnker(perRij[r], ankerTijd) ?: return true
                 ankerVast = true
                 toonRij(r)
                 geefFocus(nieuw)
@@ -392,6 +414,75 @@ fun GidsScherm(
         }
         return true
     }
+
+    fun openMenu(key: String) {
+        menuZender = key
+        if (state.toonTip) zenderActies.tipGezien()
+    }
+
+    // Schuift de opgepakte zender één rij op; de rij en de focus blijven in beeld.
+    fun verplaatsRij(key: String, stap: Int) {
+        val i = zenders.indexOfFirst { it.key == key }
+        if (i + stap !in zenders.indices) return
+        // Een LazyColumn houdt normaal de bovenste rij in beeld, ook als die verschuift;
+        // dan lijkt de rest te verspringen. Hier blijft de lijst staan en zakt de rij.
+        lijst.requestScrollToItem(lijst.firstVisibleItemIndex, lijst.firstVisibleItemScrollOffset)
+        zenderActies.verplaatsZender(key, stap)
+        val p = gefocust
+        scope.launch {
+            delay(50)
+            toonRij(i + stap)
+            if (p != null) geefFocus(p)
+        }
+    }
+
+    fun verberg(key: String) {
+        val i = zenders.indexOfFirst { it.key == key }
+        val buur = zenders.getOrNull(i + 1) ?: zenders.getOrNull(i - 1)
+        if (buur != null) {
+            doelZender = buur.key
+            doelStart = 0L
+            herplaats = true
+        }
+        zenderActies.verbergZender(key)
+    }
+
+    // Alle toetsen in het raster. OK zelf afhandelen, zodat lang indrukken het menu
+    // opent in plaats van het detailvenster; tijdens het verplaatsen gaan omhoog en
+    // omlaag naar de zender in plaats van naar de focus.
+    fun verwerkToets(e: KeyEvent): Boolean {
+        val opgepakt = verplaatst
+        if (opgepakt != null) {
+            when {
+                e.key == Key.DirectionUp || e.key == Key.DirectionDown ->
+                    if (e.type == KeyEventType.KeyDown) verplaatsRij(opgepakt, if (e.key == Key.DirectionUp) -1 else 1)
+                isOk(e.key) -> if (e.type == KeyEventType.KeyUp) verplaatst = null
+                // Terug: via de BackHandler hieronder.
+                e.key == Key.Back -> return false
+            }
+            return true
+        }
+        if (isOk(e.key)) {
+            val p = gefocust ?: return false
+            if (e.type == KeyEventType.KeyDown) {
+                val herhaling = e.nativeKeyEvent.repeatCount
+                if (herhaling == 0) langIngedrukt = false
+                if (herhaling >= 1 && !langIngedrukt) {
+                    langIngedrukt = true
+                    Geluid.klik(view)
+                    openMenu(p.zenderKey)
+                }
+            } else if (e.type == KeyEventType.KeyUp && !langIngedrukt) {
+                Geluid.klik(view)
+                kies(p)
+                if (!p.opvulling) detail = p
+            }
+            return true
+        }
+        return e.type == KeyEventType.KeyDown && navigeer(e.key)
+    }
+
+    BackHandler(enabled = verplaatst != null) { verplaatst = null }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compact = maxHeight < COMPACT_ONDER
@@ -407,9 +498,14 @@ fun GidsScherm(
             Kop(
                 nu, state, focusKnop, onVernieuw, onStatus,
                 compact = compact,
+                tip = when {
+                    !state.toonTip || zenders.isEmpty() -> null
+                    touch -> "Tip: hou een programma ingedrukt om die zender te verplaatsen of te verbergen."
+                    else -> "Tip: hou OK ingedrukt om een zender te verplaatsen of te verbergen."
+                },
                 // Na het vegen snel terug naar het huidige uur (op TV volstaan de pijltjes).
                 onNu = if (touch) {
-                    { beeldMin = max(0f, (System.currentTimeMillis() - oorsprong) / MIN.toFloat() - 30f) }
+                    { beeldMin = max(0f, (Klok.nu() - oorsprong) / MIN.toFloat() - 30f) }
                 } else {
                     null
                 },
@@ -520,19 +616,27 @@ fun GidsScherm(
                             .fillMaxWidth()
                             .weight(1f)
                             .onFocusChanged { rasterFocus = it.hasFocus }
-                            .onPreviewKeyEvent { e ->
-                                e.type == KeyEventType.KeyDown && navigeer(e.key)
-                            }
+                            .onPreviewKeyEvent { e -> verwerkToets(e) }
                     ) {
                         // Een week aan blokken per rij is te zwaar om in één keer op te
                         // bouwen: enkel wat rond het beeld ligt, in stappen van twee uur.
                         val vak by remember(rasterStart) { derivedStateOf { (scrollGeanimeerd() / 120f).toInt() } }
                         val vensterVan = rasterStart + (vak - 2) * 2 * UUR
                         val vensterTot = rasterStart + (vak + 5) * 2 * UUR
+                        if (zenders.isEmpty() && res != null) {
+                            Column(Modifier.padding(start = 12.dp, top = 24.dp)) {
+                                Text("Alle zenders zijn verborgen.", color = Kleuren.tekstZacht, fontSize = 17.sp)
+                                Spacer(Modifier.height(12.dp))
+                                TvKnop("Alle zenders weer tonen") { zenderActies.toonAlleZenders() }
+                            }
+                        }
                         LazyColumn(Modifier.fillMaxSize(), state = lijst) {
                             itemsIndexed(zenders, key = { _, z -> z.key }) { i, z ->
                                 ZenderRij(
+                                    modifier = Modifier.animateItem(),
                                     zender = z,
+                                    opgepakt = z.key == verplaatst,
+                                    onLangKlik = { openMenu(z.key) },
                                     zichtbaar = perRij[i],
                                     zenderBreedte = zenderBreedte,
                                     rasterStart = rasterStart,
@@ -593,6 +697,15 @@ fun GidsScherm(
                 }
             }
         }
+        val vz = verplaatst?.let { zenderVan(it) }
+        if (vz != null) {
+            VerplaatsBalk(
+                zender = vz,
+                touch = touch,
+                onStap = { verplaatsRij(vz.key, it) },
+                onKlaar = { verplaatst = null },
+            )
+        }
     }
 
     val d = detail
@@ -603,6 +716,141 @@ fun GidsScherm(
         }
         Dialog(onDismissRequest = sluit) {
             DetailKaart(d, nu, onSluit = sluit)
+        }
+    }
+
+    val mz = menuZender?.let { zenderVan(it) }
+    if (mz != null) {
+        val sluit: () -> Unit = {
+            menuZender = null
+            val terug = teruggezet
+            if (terug != null) {
+                // Zo zie je meteen waar de zender teruggekomen is.
+                teruggezet = null
+                doelZender = terug
+                doelStart = 0L
+                herplaats = true
+                terugkeer++
+            } else {
+                focusVerzoek++
+            }
+        }
+        Dialog(onDismissRequest = sluit) {
+            ZenderMenu(
+                zender = mz,
+                verborgen = state.zenders.volgorde.filter { it in state.zenders.verborgen }.mapNotNull { zenderVan(it) },
+                onVerplaats = {
+                    verplaatst = mz.key
+                    sluit()
+                },
+                onVerberg = {
+                    menuZender = null
+                    verberg(mz.key)
+                },
+                onToon = {
+                    teruggezet = it
+                    zenderActies.toonZender(it)
+                },
+                onSluit = sluit,
+            )
+        }
+    }
+}
+
+private fun isOk(k: Key) = k == Key.DirectionCenter || k == Key.Enter || k == Key.NumPadEnter
+
+/** Het menu van een zender, na OK lang indrukken (of lang tikken). */
+@Composable
+private fun ZenderMenu(
+    zender: ZenderDef,
+    verborgen: List<ZenderDef>,
+    onVerplaats: () -> Unit,
+    onVerberg: () -> Unit,
+    onToon: (String) -> Unit,
+    onSluit: () -> Unit,
+) {
+    var toonVerborgen by remember { mutableStateOf(false) }
+    if (verborgen.isEmpty()) toonVerborgen = false
+    val eerste = remember { FocusRequester() }
+    // Na het tonen van een zender verdwijnt zijn knop: de focus terug bovenaan.
+    LaunchedEffect(toonVerborgen, verborgen.size) {
+        delay(100)
+        runCatching { eerste.requestFocus() }
+    }
+    // OK kan nog ingedrukt zijn van het lang indrukken: pas een nieuwe druk telt.
+    var versGedrukt by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .widthIn(max = 460.dp)
+            .fillMaxWidth()
+            .onPreviewKeyEvent { e ->
+                Geluid.toets(e)
+                if (isOk(e.key) && !versGedrukt) {
+                    if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
+                        versGedrukt = true
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                }
+            }
+            .clip(RoundedCornerShape(16.dp))
+            .background(Kleuren.paneel)
+            .border(1.dp, Kleuren.knop, RoundedCornerShape(16.dp))
+            .padding(24.dp)
+    ) {
+        Text(zender.naam, color = Color(zender.kleur), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(14.dp))
+        val knop = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+        if (!toonVerborgen) {
+            TvKnop("Verplaatsen", modifier = knop.focusRequester(eerste)) { onVerplaats() }
+            TvKnop("Verbergen", modifier = knop) { onVerberg() }
+            if (verborgen.isNotEmpty()) {
+                TvKnop("Verborgen zenders (${verborgen.size})", modifier = knop) { toonVerborgen = true }
+            }
+            TvKnop("Sluiten", modifier = knop) { onSluit() }
+        } else {
+            Text("Kies een zender om weer te tonen", color = Kleuren.tekstZacht, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                verborgen.forEachIndexed { i, z ->
+                    TvKnop(
+                        "Tonen: ${z.naam}",
+                        modifier = if (i == 0) knop.focusRequester(eerste) else knop,
+                    ) { onToon(z.key) }
+                }
+            }
+            TvKnop("Terug", modifier = knop) { toonVerborgen = false }
+        }
+    }
+}
+
+/** Onderaan tijdens het verplaatsen: uitleg, en op een aanraakscherm de knoppen. */
+@Composable
+private fun BoxScope.VerplaatsBalk(zender: ZenderDef, touch: Boolean, onStap: (Int) -> Unit, onKlaar: () -> Unit) {
+    Row(
+        Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 20.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Kleuren.focus)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (touch) "${zender.naam} verplaatsen" else "${zender.naam}: omhoog of omlaag om te verplaatsen, OK om neer te zetten",
+            color = Kleuren.opFocus,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (touch) {
+            Spacer(Modifier.width(12.dp))
+            TvKnop("▲") { onStap(-1) }
+            TvKnop("▼") { onStap(1) }
+            TvKnop("Klaar") { onKlaar() }
         }
     }
 }
@@ -620,6 +868,7 @@ private fun Kop(
     onStatus: () -> Unit,
     onNaarRaster: () -> Boolean,
     compact: Boolean,
+    tip: String?,
     onNu: (() -> Unit)?,
 ) {
     Row(
@@ -633,7 +882,21 @@ private fun Kop(
         Text(uurMin(nu), color = Kleuren.tekst, fontSize = if (compact) 24.sp else 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.width(if (compact) 12.dp else 16.dp))
         Text(datumLang(nu), color = Kleuren.tekstZacht, fontSize = if (compact) 15.sp else 17.sp)
-        Spacer(Modifier.weight(1f))
+        // Een waarschuwing gaat voor op de tip.
+        val melding = state.waarschuwing ?: tip
+        if (melding != null) {
+            // Ook zichtbaar als er een programma gefocust is (dan toont het infopaneel geen fouten).
+            Text(
+                melding,
+                modifier = Modifier.weight(1f).padding(horizontal = if (compact) 12.dp else 20.dp),
+                color = if (state.waarschuwing != null) Kleuren.fout else Kleuren.tekstZacht,
+                fontSize = if (compact) 13.sp else 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
         if (onNu != null) {
             TvKnop("Nu") { onNu() }
         }
@@ -711,7 +974,11 @@ private fun InfoPaneel(p: Programma?, nu: Long, state: GidsState, touch: Boolean
 
 @Composable
 private fun ZenderRij(
+    modifier: Modifier,
     zender: ZenderDef,
+    /** Deze zender wordt verplaatst: de hele rij licht op. */
+    opgepakt: Boolean,
+    onLangKlik: () -> Unit,
     zichtbaar: List<Programma>,
     zenderBreedte: Dp,
     rasterStart: Long,
@@ -728,12 +995,13 @@ private fun ZenderRij(
     onKlik: (Programma) -> Unit,
 ) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(RIJ_HOOGTE)
             .padding(vertical = 3.dp)
+            .then(if (opgepakt) Modifier.border(2.dp, Kleuren.focus, RoundedCornerShape(8.dp)) else Modifier)
     ) {
-        ZenderLabel(zender, zenderBreedte)
+        ZenderLabel(zender, zenderBreedte, opgepakt, onLangKlik)
         Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
             if (zichtbaar.isEmpty()) {
                 Text(
@@ -766,6 +1034,7 @@ private fun ZenderRij(
                                 focusVerzoek = if (p == doel) focusVerzoek else -1,
                                 onFocus = { onFocus(p) },
                                 onKlik = { onKlik(p) },
+                                onLangKlik = onLangKlik,
                                 modifier = Modifier
                                     .offset(x = DP_PER_MIN * startMin)
                                     .width(DP_PER_MIN * ((e - s) / MIN.toFloat()))
@@ -781,14 +1050,16 @@ private fun ZenderRij(
 }
 
 @Composable
-private fun ZenderLabel(z: ZenderDef, breedte: Dp) {
+private fun ZenderLabel(z: ZenderDef, breedte: Dp, opgepakt: Boolean, onLangKlik: () -> Unit) {
     Row(
         Modifier
             .width(breedte)
             .fillMaxHeight()
             .padding(end = 8.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(Kleuren.paneel)
+            .background(if (opgepakt) Kleuren.focus else Kleuren.paneel)
+            // Aanraakscherm: lang tikken op de naam opent het menu (niet focusbaar op tv).
+            .pointerInput(onLangKlik) { detectTapGestures(onLongPress = { onLangKlik() }) }
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -802,7 +1073,7 @@ private fun ZenderLabel(z: ZenderDef, breedte: Dp) {
         Spacer(Modifier.width(10.dp))
         Text(
             z.naam,
-            color = Kleuren.tekst,
+            color = if (opgepakt) Kleuren.opFocus else Kleuren.tekst,
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 2,
@@ -822,6 +1093,7 @@ private fun ProgrammaBlok(
     focusVerzoek: Int,
     onFocus: () -> Unit,
     onKlik: () -> Unit,
+    onLangKlik: () -> Unit,
     modifier: Modifier,
 ) {
     var focus by remember { mutableStateOf(false) }
@@ -854,13 +1126,15 @@ private fun ProgrammaBlok(
                     onFocus()
                 }
             }
-            .clickable(
+            // Tikken en lang tikken; OK op de afstandsbediening handelt het raster zelf af.
+            .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {
                     Geluid.klik(view)
                     onKlik()
                 },
+                onLongClick = onLangKlik,
             )
             .clip(RoundedCornerShape(7.dp))
             .background(achtergrond)

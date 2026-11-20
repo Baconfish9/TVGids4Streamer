@@ -37,9 +37,16 @@ Werkt ook op Android-telefoons en -tablets, in liggende stand.
   een knop **Nu** om terug te springen. Hou je het toestel rechtop, dan vraagt een
   animatie om het te draaien. Op een telefoon verdwijnt het infopaneel om plaats te sparen.
 - **Infopaneel en detailvenster** met uren, duur, genre en beschrijving.
+- **Zenders verplaatsen en verbergen**, gewoon in de gids: hou OK ingedrukt (of tik lang)
+  op een programma. Met omhoog en omlaag schuift de zender tussen de andere; een verborgen
+  zender zet je in hetzelfde menu terug aan.
 - **Kijken of terugkijken**: vanuit het detailvenster open je meteen de app van de zender.
-- **Automatisch verversen** zodra de gegevens ouder zijn dan 6 uur. Je positie in de gids
-  blijft daarbij behouden.
+- **Automatisch verversen**: elke nacht op de achtergrond, en in de app zodra de gegevens
+  ouder zijn dan 6 uur. Je positie in de gids blijft daarbij behouden.
+- **Zuinig met data**: gecomprimeerde bronnen en voorwaardelijke aanvragen. Is er niets
+  veranderd, dan wordt er niets gedownload.
+- **Klopt de klok van het toestel niet**, dan rekent de gids met de tijd van de server, en
+  zegt ze het als een beveiligde verbinding daardoor geweigerd wordt.
 - **Snel opstarten**: de laatste gids wordt bewaard, zodat de app meteen iets toont, ook
   zonder internet.
 - **Statusscherm** per bron en per zender, handig om ontbrekende zenders te koppelen.
@@ -106,9 +113,11 @@ beginnen staat er geen kijkknop.
 ## Programmagegevens
 
 De gids leest [XMLTV](https://wiki.xmltv.org/)-bestanden (`.xml` of `.xml.gz`). Standaard
-komen die van [open-epg.com](https://www.open-epg.com/) (twee Belgische en twee Nederlandse
-bestanden). De bronnen worden tegelijk opgehaald; staat een programma in meer dan één bron,
-dan wint de bron die het eerst in de lijst staat.
+komen die van [open-epg.com](https://www.open-epg.com/), met
+[epgshare01.online](https://epgshare01.online/) als reserve van een andere aanbieder. De
+bronnen worden na elkaar geprobeerd: een volgende bron wordt alleen opgehaald voor zenders
+die nog geen komende programma's hebben. Meestal volstaat het eerste bestand (ongeveer
+0,8 MB).
 
 Je kan ook een eigen bron gebruiken, bijvoorbeeld een bestand dat je dagelijks genereert met
 [iptv-org/epg](https://github.com/iptv-org/epg) en ergens online zet.
@@ -251,10 +260,14 @@ die naar dezelfde naam luisteren.
 
 ```
 app/src/main/java/be/tvgids/app/
-├── Config.kt        Zenders, EPG-bronnen en het vergelijken van zendernamen
-├── DraaiMelding.kt  Geanimeerde melding om een telefoon of tablet liggend te houden
-├── Epg.kt           XMLTV-parser, ophalen, opschonen en cache
-├── GidsScherm.kt    De gids, het detailvenster en het statusscherm (Jetpack Compose)
-└── MainActivity.kt  Activity en ViewModel, automatisch verversen
+├── Config.kt         Zenders, EPG-bronnen en het vergelijken van zendernamen
+├── DraaiMelding.kt   Geanimeerde melding om een telefoon of tablet liggend te houden
+├── Epg.kt            XMLTV-parser, ophalen, opschonen en cache
+├── GidsScherm.kt     De gids, het detailvenster en het statusscherm (Jetpack Compose)
+├── Klok.kt           Tijd van de gids, gecorrigeerd als de toestelklok afwijkt
+├── MainActivity.kt   Activity en ViewModel, automatisch verversen
+├── Navigatie.kt      Pijltjesnavigatie door het raster (zonder Compose, getest)
+├── VernieuwWerker.kt Nachtelijke verversing op de achtergrond (WorkManager)
+└── Zenders.kt        Eigen volgorde en verborgen zenders, bewaard op het toestel
 app/src/test/        Unit tests
 ```

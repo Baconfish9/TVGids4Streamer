@@ -1,6 +1,6 @@
 # Privacybeleid TV Gids
 
-*Laatst bijgewerkt: 8 oktober 2026*
+*Laatst bijgewerkt: 20 november 2026*
 
 TV Gids is een tv-gids voor Android TV, Google TV, telefoons en tablets. Dit beleid legt uit
 welke gegevens de app gebruikt.
@@ -13,10 +13,11 @@ en bevat geen analyse- of trackingdiensten.
 ## Welke gegevens de app gebruikt
 
 - **Tv-gidsgegevens.** De app haalt de programmagids op bij
-  [open-epg.com](https://www.open-epg.com) via een versleutelde verbinding (HTTPS). Zoals bij
-  elke internetverbinding ziet die dienst daarbij het IP-adres van je toestel. De app stuurt
-  geen andere gegevens mee. Voor wat open-epg.com met die gegevens doet, geldt het beleid
-  van die website.
+  [open-epg.com](https://www.open-epg.com), en als die niet volstaat bij
+  [epgshare01.online](https://epgshare01.online), via een versleutelde verbinding (HTTPS).
+  Dat gebeurt als je de app opent en één keer per nacht op de achtergrond. Zoals bij elke
+  internetverbinding ziet die dienst daarbij het IP-adres van je toestel. De app stuurt geen
+  andere gegevens mee. Voor wat die websites met die gegevens doen, geldt hun eigen beleid.
 - **Opslag op je toestel.** De opgehaalde gids wordt lokaal bewaard, zodat de app snel start
   en ook zonder internet iets toont. Die gegevens verlaten je toestel niet en worden niet in
   een back-up opgenomen. Wis je de app of haar gegevens, dan verdwijnen ze.
@@ -27,7 +28,10 @@ en bevat geen analyse- of trackingdiensten.
 
 ## Permissies
 
-De app vraagt alleen toegang tot het internet, om de gids op te halen.
+De app vraagt toegang tot het internet, om de gids op te halen. Voor de nachtelijke
+verversing komen daar drie permissies bij die Android zonder vragen toekent: de netwerkstatus
+bekijken (alleen verversen met internet), het toestel kort wakker houden tijdens het ophalen,
+en na het opstarten van het toestel de verversing opnieuw inplannen.
 
 ## Kinderen
 

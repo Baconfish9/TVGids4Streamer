@@ -3,14 +3,15 @@ package be.tvgids.app
 import android.content.Context
 import android.util.Xml
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -198,7 +199,9 @@ object XmltvParser {
         }
         info.voorGekoppeld++
         val stop = parseTijd(p.getAttributeValue(null, "stop")) ?: (start + 30 * MIN)
-        if (stop <= vanaf || start >= tot) {
+        // Ook blokken zonder duur overslaan: open-epg zet die soms vóór het echte
+        // programma met hetzelfde begin, dat anders als dubbel weggegooid wordt.
+        if (stop <= start || stop <= vanaf || start >= tot) {
             sla(p)
             return
         }
@@ -264,6 +267,14 @@ object XmltvParser {
 class EpgRepository(context: Context) {
 
     private val cacheBestand = File(context.filesDir, "epg-cache.json")
+    /** Laatst gedownloade versie van elke bron, voor voorwaardelijke aanvragen. */
+    private val bronnenMap = File(context.filesDir, "bronnen")
+    private val voorkeuren = ZenderVoorkeuren(context)
+
+    companion object {
+        /** De app en de achtergrondtaak schrijven dezelfde cache: nooit tegelijk. */
+        private val slot = Mutex()
+    }
 
     private val aliasIndex: Map<String, String> = buildMap {
         for (z in Config.ZENDERS) {
@@ -286,82 +297,156 @@ class EpgRepository(context: Context) {
         }
     }
 
-    suspend fun haalOp(vorige: EpgResultaat?): EpgResultaat = withContext(Dispatchers.IO) {
-        val nu = System.currentTimeMillis()
-        val vanaf = nu - GESCHIEDENIS
-        val tot = nu + 30 * UUR
+    /** Wanneer de cache het laatst geschreven werd (0 als er nog geen is). */
+    fun cacheTijd(): Long = cacheBestand.lastModified()
 
-        // Alle bronnen tegelijk ophalen, elk in een eigen verzameling.
-        val perBron = Config.EPG_BRONNEN.map { url ->
-            async {
+    /** Vraagt enkel de headers van de eerste bron op, om de klok te controleren. */
+    suspend fun meetKlok() = withContext(Dispatchers.IO) {
+        try {
+            val c = verbinding(Config.EPG_BRONNEN.first())
+            c.requestMethod = "HEAD"
+            c.responseCode
+            Klok.meet(c.date)
+            c.disconnect()
+        } catch (e: Exception) {
+        }
+    }
+
+    /**
+     * Haalt de gids op en bewaart ze. De vorige gids komt uit de cache, zodat de
+     * app en de achtergrondtaak elkaars werk aanvullen in plaats van overschrijven.
+     */
+    suspend fun haalOp(): EpgResultaat = slot.withLock {
+        withContext(Dispatchers.IO) {
+            if (!Klok.gemeten) meetKlok()
+            val vorige = laadCache()
+            val nu = Klok.nu()
+            val vanaf = nu - GESCHIEDENIS
+            val tot = nu + 30 * UUR
+
+            // De bronnen na elkaar, in volgorde van voorkeur. Een volgende bron is
+            // enkel nodig voor zenders die nog geen komende programma's hebben, en
+            // levert ook alleen voor die zenders gegevens (geen mengeling van bronnen).
+            val verzameld: MutableMap<String, MutableMap<Long, Programma>> = HashMap()
+            val niet = TreeSet<String>(String.CASE_INSENSITIVE_ORDER)
+            val statussen = ArrayList<BronStatus>()
+            // Voor een verborgen zender halen we geen extra bron op.
+            val gewenst = voorkeuren.laad().zichtbaar
+            for (url in Config.EPG_BRONNEN) {
+                val ontbrekend = gewenst
+                    .filter { key -> verzameld[key].orEmpty().values.none { it.stop > nu } }
+                    .toSet()
+                if (ontbrekend.isEmpty()) {
+                    statussen.add(BronStatus(url, true, "Niet nodig: alle zenders hebben al programma's."))
+                    continue
+                }
                 val progs: MutableMap<String, MutableMap<Long, Programma>> = HashMap()
                 val nietHier = HashSet<String>()
                 val status = try {
-                    open(url).use { ins ->
+                    val (bestand, ongewijzigd) = download(url)
+                    openBestand(bestand).use { ins ->
                         val info = XmltvParser.parse(ins, this@EpgRepository::koppel, vanaf, tot, progs, nietHier)
-                        BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, info.samenvatting(), info.buitenVenster)
+                        val extra = if (ongewijzigd) " Ongewijzigd sinds de vorige keer." else ""
+                        val melding = if (info.zenders == 0) "Geen gidsgegevens in deze bron (leeg of geen XMLTV)." else info.samenvatting() + extra
+                        BronStatus(url, info.gekoppeld > 0 && info.inVenster > 0, melding, info.buitenVenster)
                     }
                 } catch (e: Exception) {
                     BronStatus(url, false, foutMelding(e), isCertificaatFout(e))
                 }
-                Triple(progs, nietHier, status)
-            }
-        }.awaitAll()
-
-        // Samenvoegen in de volgorde van EPG_BRONNEN: bij hetzelfde begintijdstip wint de eerste bron.
-        val verzameld: MutableMap<String, MutableMap<Long, Programma>> = HashMap()
-        val niet = TreeSet<String>(String.CASE_INSENSITIVE_ORDER)
-        val statussen = ArrayList<BronStatus>()
-        for ((progs, nietHier, status) in perBron) {
-            for ((key, m) in progs) {
-                val doel = verzameld.getOrPut(key) { HashMap() }
-                for ((start, p) in m) doel.putIfAbsent(start, p)
-            }
-            niet.addAll(nietHier)
-            statussen.add(status)
-        }
-
-        val nieuw = verzameld.mapValues { (_, m) -> opschonen(m.values) }
-        val totaal = nieuw.values.sumOf { it.size }
-        val programmas = metGeschiedenis(nieuw, vorige, nu)
-
-        if (totaal == 0 && vorige != null) {
-            // Niets nieuws gevonden: oude gids houden, wel de status tonen.
-            vorige.copy(programmas = programmas, bronnen = statussen, nietGekoppeld = niet.toList())
-        } else {
-            val r = EpgResultaat(programmas, statussen, niet.toList(), nu)
-            if (totaal > 0) {
-                try {
-                    // Eerst naar een tijdelijk bestand, zodat een onderbroken
-                    // schrijfactie de bestaande cache niet beschadigt.
-                    val tijdelijk = File(cacheBestand.path + ".tmp")
-                    tijdelijk.writeText(naarJson(r))
-                    if (!tijdelijk.renameTo(cacheBestand)) tijdelijk.delete()
-                } catch (e: Exception) {
+                for ((key, m) in progs) {
+                    if (key in ontbrekend) verzameld.getOrPut(key) { HashMap() }.putAll(m)
                 }
+                niet.addAll(nietHier)
+                statussen.add(status)
             }
-            r
+            ruimBronnenOp()
+
+            val nieuw = verzameld.mapValues { (_, m) -> opschonen(m.values) }
+            val totaal = nieuw.values.sumOf { it.size }
+            val programmas = metGeschiedenis(nieuw, vorige, nu)
+
+            if (totaal == 0 && vorige != null) {
+                // Niets nieuws gevonden: oude gids houden, wel de status tonen.
+                vorige.copy(programmas = programmas, bronnen = statussen, nietGekoppeld = niet.toList())
+            } else {
+                val r = EpgResultaat(programmas, statussen, niet.toList(), nu)
+                if (totaal > 0) {
+                    try {
+                        // Eerst naar een tijdelijk bestand, zodat een onderbroken
+                        // schrijfactie de bestaande cache niet beschadigt.
+                        val tijdelijk = File(cacheBestand.path + ".tmp")
+                        tijdelijk.writeText(naarJson(r))
+                        if (!tijdelijk.renameTo(cacheBestand)) tijdelijk.delete()
+                    } catch (e: Exception) {
+                    }
+                }
+                r
+            }
         }
     }
 
-    private fun open(adres: String): InputStream {
+    private fun verbinding(adres: String): HttpURLConnection {
         val c = URL(adres).openConnection() as HttpURLConnection
         c.connectTimeout = 20_000
         c.readTimeout = 90_000
         c.instanceFollowRedirects = true
         c.setRequestProperty("User-Agent", "TVGids-GoogleTV/1.0")
-        val code = c.responseCode
-        if (code !in 200..299) {
+        return c
+    }
+
+    private fun bronNaam(adres: String): String = "bron-" + Integer.toHexString(adres.hashCode())
+
+    /**
+     * Bewaart een bron op schijf, samen met zijn ETag en Last-Modified. De volgende
+     * keer antwoordt de server met "304 Not Modified" als er niets veranderd is, en
+     * lezen we gewoon de bewaarde kopie. Geeft het bestand terug en of het ongewijzigd was.
+     */
+    private fun download(adres: String): Pair<File, Boolean> {
+        bronnenMap.mkdirs()
+        val naam = bronNaam(adres)
+        val bestand = File(bronnenMap, naam)
+        val meta = File(bronnenMap, "$naam.meta")
+        val c = verbinding(adres)
+        try {
+            if (bestand.exists() && meta.exists()) {
+                val regels = meta.readLines()
+                regels.getOrNull(0)?.takeIf { it.isNotEmpty() }?.let { c.setRequestProperty("If-None-Match", it) }
+                regels.getOrNull(1)?.takeIf { it.isNotEmpty() }?.let { c.setRequestProperty("If-Modified-Since", it) }
+            }
+            val code = c.responseCode
+            Klok.meet(c.date)
+            if (code == HttpURLConnection.HTTP_NOT_MODIFIED && bestand.exists()) return bestand to true
+            if (code !in 200..299) throw IOException("HTTP $code")
+            val tijdelijk = File(bronnenMap, "$naam.tmp")
+            BegrensdeStroom(c.inputStream, MAX_BRON_BYTES).use { ins ->
+                tijdelijk.outputStream().use { ins.copyTo(it, 64 * 1024) }
+            }
+            if (!tijdelijk.renameTo(bestand)) {
+                tijdelijk.delete()
+                throw IOException("Bron kon niet bewaard worden")
+            }
+            meta.writeText("${c.getHeaderField("ETag").orEmpty()}\n${c.getHeaderField("Last-Modified").orEmpty()}")
+            return bestand to false
+        } finally {
             c.disconnect()
-            throw IOException("HTTP $code")
         }
-        val buf = BufferedInputStream(c.inputStream, 64 * 1024)
+    }
+
+    /** Opent een bewaarde bron, gezipt of niet. */
+    private fun openBestand(bestand: File): InputStream {
+        val buf = BufferedInputStream(FileInputStream(bestand), 64 * 1024)
         buf.mark(4)
         val b1 = buf.read()
         val b2 = buf.read()
         buf.reset()
         val stroom = if (b1 == 0x1f && b2 == 0x8b) BufferedInputStream(GZIPInputStream(buf), 64 * 1024) else buf
         return BegrensdeStroom(stroom, MAX_BRON_BYTES)
+    }
+
+    /** Ruimt kopieën op van bronnen die niet meer in [Config.EPG_BRONNEN] staan. */
+    private fun ruimBronnenOp() {
+        val namen = Config.EPG_BRONNEN.map { bronNaam(it) }.flatMap { listOf(it, "$it.meta") }.toSet()
+        bronnenMap.listFiles()?.filter { it.name !in namen }?.forEach { it.delete() }
     }
 
     private fun naarJson(r: EpgResultaat): String {

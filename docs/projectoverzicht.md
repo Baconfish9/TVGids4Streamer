@@ -27,10 +27,14 @@ Een **Android TV-app in Kotlin met Jetpack Compose**. Ze toont een live tv-gids 
   - Bij omhoog en omlaag blijf je rond hetzelfde tijdstip, zodat je niet geleidelijk naar links of rechts afdrijft.
   - Heel korte opvullers (korter dan 5 minuten, zoals Lotto of Keno) worden overgeslagen.
   - Titels van lange programma's blijven zichtbaar aan de linkerrand.
+- **Zenders verplaatsen en verbergen:** OK lang indrukken (of lang tikken) op een programma opent een menu voor die zender: Verplaatsen, Verbergen en Verborgen zenders. Bij het verplaatsen licht de rij op en schuift ze met omhoog en omlaag; OK of Terug zet ze neer. Na het verbergen gaat de focus naar de zender eronder, na het terug aanzetten naar die zender. Een tip bovenaan legt het uit tot je het menu één keer gebruikt hebt.
 - **Detailvenster:** bij een programma dat nu loopt staat de knop "Kijken in …", bij een voorbij programma "Terugkijken in …". Bij een programma dat nog moet beginnen staat er geen kijkknop.
 - **Statusscherm:** toont per bron en per zender hoeveel programma's er gevonden zijn, en onder welke namen de niet-gekoppelde zenders in de bronnen staan, zodat je ze als alias kunt toevoegen.
 - **Verversen en positie:**
-  - De gids haalt nieuwe gegevens op zodra ze ouder zijn dan 6 uur (controle elke 15 minuten zolang de app in beeld is).
+  - Elke nacht rond 03:30 ververst `VernieuwWerker` de gids op de achtergrond (WorkManager, alleen met internet).
+  - In de app worden nieuwe gegevens opgehaald zodra ze ouder zijn dan 6 uur (controle elke 15 minuten zolang de app in beeld is). Een gids die de achtergrondtaak intussen ophaalde, wordt dan overgenomen.
+  - Lukt verversen niet, dan staat bovenaan in het rood van wanneer de getoonde gids is.
+  - Gaten in een zenderrij worden gevuld met een grijs blok "Geen uitzending", zodat omhoog en omlaag op hetzelfde tijdstip blijven.
   - Je positie in de gids blijft bewaard bij het verversen en bij een bezoek aan het statusscherm.
   - Kom je terug na meer dan 5 minuten in een andere app, dan springt de gids terug naar "nu".
 
@@ -38,24 +42,33 @@ Een **Android TV-app in Kotlin met Jetpack Compose**. Ze toont een live tv-gids 
 
 ```
 app/src/main/java/be/tvgids/app/
-├── Config.kt        Zenders, EPG-bronnen en het vergelijken van zendernamen (~100 regels)
-├── Epg.kt           XMLTV-parser, ophalen, opschonen en cache (~420 regels)
-├── GidsScherm.kt    De gids, het detailvenster en het statusscherm (~950 regels)
-└── MainActivity.kt  Activity en ViewModel, automatisch verversen (~130 regels)
-app/src/test/java/be/tvgids/app/KoppelenTest.kt   Unit tests
+├── Config.kt         Zenders, EPG-bronnen en het vergelijken van zendernamen (~100 regels)
+├── Epg.kt            XMLTV-parser, ophalen, opschonen en cache (~590 regels)
+├── GidsScherm.kt     De gids, het detailvenster en het statusscherm (~1160 regels)
+├── Klok.kt           Tijd van de gids, gecorrigeerd met de Date-header (~35 regels)
+├── MainActivity.kt   Activity en ViewModel, automatisch verversen (~190 regels)
+├── Navigatie.kt      Pijltjesnavigatie door het raster, zonder Compose (~35 regels)
+├── VernieuwWerker.kt Nachtelijke verversing met WorkManager (~50 regels)
+└── Zenders.kt        Eigen volgorde en verborgen zenders (~90 regels)
+app/src/test/java/be/tvgids/app/   Unit tests
 ```
 
 - **`Config.kt`:** de zenderlijst (`ZENDERS`) met naam, land, kleur, aliassen en de app die bij "Kijken" opent, plus de lijst met EPG-bronnen (`EPG_BRONNEN`). Hier staat ook `normaliseer()`: die maakt van namen als "Eén HD", "een.be" en "EEN" allemaal "een", zodat zendernamen uit verschillende bronnen te vergelijken zijn.
 - **`Epg.kt`:**
   - Leest XMLTV-bestanden in, gewoon of als `.gz`, met een streaming parser zodat grote bestanden geen geheugenproblemen geven.
-  - De vier bronnen van open-epg.com (`belgium1`, `belgium2`, `netherlands1`, `netherlands2`) worden tegelijk opgehaald.
-  - Staat een programma in meer dan één bron, dan wint de bron die het eerst in de lijst staat.
+  - De bronnen worden na elkaar geprobeerd: eerst `belgium1` en `netherlands1` van open-epg.com (als `.gz`), dan als reserve `BE2` en `NL1` van epgshare01.online. Een volgende bron is alleen nodig voor zenders zonder komende programma's, en levert ook alleen voor die zenders gegevens.
+  - Elke bron wordt op schijf bewaard met zijn ETag en Last-Modified. Is er niets veranderd, dan antwoordt de server met `304` en wordt de bewaarde kopie gelezen.
+  - Blokken zonder duur worden overgeslagen; open-epg zet die soms vóór het echte programma met hetzelfde begin.
+  - De app en de achtergrondtaak schrijven nooit tegelijk naar de cache (één `Mutex`).
+  - Uit de `Date`-header van de servers volgt of de klok van het toestel afwijkt (`Klok`). Is dat meer dan 2 minuten, dan rekent de gids met de servertijd. Een geweigerd certificaat en gegevens die volledig buiten de gids vallen, geven een melding over de datum en tijd van het toestel.
   - Overlappende programma's worden rechtgezet.
   - De gids wordt als JSON bewaard (via een tijdelijk bestand, zodat een onderbroken schrijfactie de cache niet beschadigt). Zo start de app snel en toont ze ook zonder internet iets.
   - Levert een verversing niets op, dan blijft de vorige gids staan.
   - De bronnen beginnen om middernacht van vandaag. Bij elke verversing blijven daarom de oudere programma's uit de vorige gids bewaard, tot 7 dagen terug (`GESCHIEDENIS`). Wie de app minstens om de twee dagen opent, heeft zo een volledige week.
 - **`GidsScherm.kt`:** de tijdlijn, de eigen pijltjesnavigatie, het infopaneel, het detailvenster en het statusscherm. Donkere vormgeving met amber als focuskleur.
-- **`MainActivity.kt`:** de ViewModel met de status van de gids, het laden van de cache en het automatisch verversen.
+- **`MainActivity.kt`:** de ViewModel met de status van de gids, het laden van de cache en het automatisch verversen. Plant ook de nachtelijke `VernieuwWerker` in.
+- **`Zenders.kt`:** volgorde en verborgen zenders in `SharedPreferences`. Verborgen zenders blijven in de volgorde staan, zodat ze op hun plaats terugkomen; zenders die later in `Config.kt` bijkomen, verschijnen onderaan. Voor een verborgen zender wordt geen reservebron opgehaald.
+- **`Navigatie.kt`:** welk blok de focus krijgt bij links, rechts, omhoog en omlaag. Los van Compose, zodat het met unit tests gecontroleerd wordt.
 - **`KoppelenTest.kt`:** unit tests die controleren dat namen goed genormaliseerd worden, dat twee zenders niet naar dezelfde naam luisteren, dat zendersleutels uniek zijn en dat XMLTV-tijden juist omgezet worden, ook zonder tijdzone.
 
 ## Bouwen en installeren

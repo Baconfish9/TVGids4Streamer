@@ -22,16 +22,18 @@ data class ZenderDef(
 object Config {
 
     /**
-     * XMLTV-bronnen (gewoon .xml of .xml.gz). Ze worden na elkaar ingelezen;
-     * een bron die niet bestaat of faalt wordt overgeslagen en staat dan als
-     * fout in het statusscherm. Voeg gerust je eigen bron toe, bijvoorbeeld
-     * een bestand dat je zelf met iptv-org/epg genereert.
+     * XMLTV-bronnen (gewoon .xml of .xml.gz), in volgorde van voorkeur. Een bron
+     * wordt enkel opgehaald als er na de vorige nog zenders zonder programma's
+     * zijn; een bron die faalt staat als fout in het statusscherm. Voeg gerust je
+     * eigen bron toe, bijvoorbeeld een bestand dat je zelf met iptv-org/epg genereert.
      */
     val EPG_BRONNEN: List<String> = listOf(
-        "https://www.open-epg.com/files/belgium1.xml",
-        "https://www.open-epg.com/files/belgium2.xml",
-        "https://www.open-epg.com/files/netherlands1.xml",
-        "https://www.open-epg.com/files/netherlands2.xml",
+        // open-epg: belgium1 heeft alle zenders, ook NPO.
+        "https://www.open-epg.com/files/belgium1.xml.gz",
+        "https://www.open-epg.com/files/netherlands1.xml.gz",
+        // Reserve van een andere aanbieder, voor als open-epg wegvalt.
+        "https://epgshare01.online/epgshare01/epg_ripper_BE2.xml.gz",
+        "https://epgshare01.online/epgshare01/epg_ripper_NL1.xml.gz",
     )
 
     // Pakketnamen: controleer ze op je Streamer met
