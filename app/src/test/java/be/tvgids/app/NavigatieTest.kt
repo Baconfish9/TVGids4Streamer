@@ -52,4 +52,48 @@ class NavigatieTest {
         assertNull(volgendeRij(perRij, 3, 1))
         assertNull(volgendeRij(perRij, 0, -1))
     }
+
+    @Test
+    fun omlaagKiestGeenProgrammaDatNetNaDeLinkerrandEindigt() {
+        // Beeld van 14:00 tot 18:00; de focus stond op een lang programma, anker = linkerrand.
+        val beeldStart = t0 + 14 * 60 * MIN
+        val beeldEind = t0 + 18 * 60 * MIN
+        val vroeg = prog(13 * 60L, 14 * 60L + 5, "vroeg begonnen")
+        val daarna = prog(14 * 60L + 5, 15 * 60L, "daarna")
+        val rij = listOf(vroeg, daarna)
+        assertEquals(vroeg, rondAnker(rij, beeldStart))
+        assertEquals(daarna, rondAnker(rij, ankerInBeeld(beeldStart, beeldStart, beeldEind)))
+    }
+
+    @Test
+    fun ankerMiddenInBeeldBlijftOngemoeid() {
+        val anker = t0 + 15 * 60 * MIN
+        assertEquals(anker, ankerInBeeld(anker, t0 + 14 * 60 * MIN, t0 + 18 * 60 * MIN))
+    }
+
+    @Test
+    fun zichtbaarBlokLaatHetBeeldStaan() {
+        // Beeld 600..900 (minuten in het raster).
+        assertNull(nieuweScroll(start = 650f, eind = 700f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+        // Lang programma dat het hele beeld vult.
+        assertNull(nieuweScroll(start = 100f, eind = 2000f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+        // Al bezig maar ruim zichtbaar: niet terug naar het begin.
+        assertNull(nieuweScroll(start = 300f, eind = 700f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+    }
+
+    @Test
+    fun blokLinksBuitenBeeldSchuiftZoWeinigMogelijk() {
+        // Past in beeld: helemaal tonen, met 15 minuten ervoor.
+        assertEquals(485f, nieuweScroll(start = 500f, eind = 590f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+        // Dagen "Geen uitzending": enkel het einde tonen, niet dagen terug.
+        assertEquals(345f, nieuweScroll(start = 0f, eind = 600f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+    }
+
+    @Test
+    fun blokRechtsBuitenBeeldKomtVanLinksInBeeld() {
+        assertEquals(935f, nieuweScroll(start = 950f, eind = 1000f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+        assertEquals(830f, nieuweScroll(start = 860f, eind = 1000f, huidig = 600f, breedte = 300f, maxScroll = 5000f))
+        // Nooit voorbij het einde van het raster.
+        assertEquals(700f, nieuweScroll(start = 950f, eind = 1000f, huidig = 600f, breedte = 300f, maxScroll = 700f))
+    }
 }

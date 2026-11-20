@@ -24,7 +24,8 @@ Een **Android TV-app in Kotlin met Jetpack Compose**. Ze toont een live tv-gids 
 - **Tijdlijn:** ze loopt van het oudste bewaarde programma (hoogstens 7 dagen terug) tot 28 uur vooruit. Enkel de programmablokken rond het beeld worden opgebouwd, zodat een week aan gegevens vlot blijft. Een rode lijn toont het huidige moment en lopende programma's krijgen een voortgangsbalk. Alle uren staan altijd in Brusselse tijd, ook als het toestel anders is ingesteld.
 - **Bediening met de pijltjes:**
   - De tijdlijn schuift mee terwijl je bladert.
-  - Bij omhoog en omlaag blijf je rond hetzelfde tijdstip, zodat je niet geleidelijk naar links of rechts afdrijft.
+  - Bij omhoog en omlaag blijf je rond hetzelfde tijdstip, zodat je niet geleidelijk naar links of rechts afdrijft. Dat tijdstip wordt binnen het beeld gehouden, dus de tijdlijn schuift dan niet mee.
+  - Gaat de focus naar links naar een lang programma, dan schuift de tijdlijn zo weinig mogelijk terug: het hele programma als het past, anders het laatste stuk. Het automatisch meeschuiven van Compose ("bring into view") staat uit voor de tijdlijn.
   - Heel korte opvullers (korter dan 5 minuten, zoals Lotto of Keno) worden overgeslagen.
   - Titels van lange programma's blijven zichtbaar aan de linkerrand.
 - **Zenders verplaatsen en verbergen:** OK lang indrukken (of lang tikken) op een programma opent een menu voor die zender: Verplaatsen, Verbergen en Verborgen zenders. Bij het verplaatsen licht de rij op en schuift ze met omhoog en omlaag; OK of Terug zet ze neer. Na het verbergen gaat de focus naar de zender eronder, na het terug aanzetten naar die zender. Een tip bovenaan legt het uit tot je het menu één keer gebruikt hebt.

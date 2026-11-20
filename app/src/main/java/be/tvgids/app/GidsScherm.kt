@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
@@ -167,6 +168,15 @@ internal fun dagNaam(ms: Long, nu: Long): String {
 
 private fun halfUurOmlaag(ms: Long): Long = ms - (ms % (30 * MIN))
 
+/**
+ * Compose schuift een scrollbare container vanzelf naar het gefocuste blok, en
+ * brengt daarbij het begin van een lang programma in beeld. Dat gaf rare sprongen
+ * naast [nieuweScroll]; de tijdlijn volgt de focus daarom enkel zelf.
+ */
+private val ZelfVolgen = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
+}
+
 private fun zenderVan(key: String): ZenderDef? = Config.ZENDERS.firstOrNull { it.key == key }
 
 /** Gaten korter dan dit blijven gewoon leeg. */
@@ -280,6 +290,8 @@ fun GidsScherm(
     // bij verticaal bladeren niet stilaan naar links of rechts afdrijft.
     var ankerTijd by rememberSaveable { mutableLongStateOf(Klok.nu()) }
     var ankerVast by remember { mutableStateOf(false) }
+    // Hoeveel minuten de tijdlijn breed is op dit scherm.
+    var beeldBreedte by remember { mutableFloatStateOf(0f) }
     // Of de focus in het raster staat (en dus niet op een knop bovenaan).
     var rasterFocus by remember { mutableStateOf(false) }
     // Of de focus sinds het openen van dit scherm al eens geplaatst werd.
@@ -405,7 +417,9 @@ fun GidsScherm(
             Key.DirectionUp, Key.DirectionDown -> {
                 val r = volgendeRij(perRij, rij, if (key == Key.DirectionUp) -1 else 1)
                     ?: return key == Key.DirectionDown
-                val nieuw = rondAnker(perRij[r], ankerTijd) ?: return true
+                val beeldStart = rasterStart + (scrollMin() * MIN).toLong()
+                val beeldEind = beeldStart + (beeldBreedte * MIN).toLong()
+                val nieuw = rondAnker(perRij[r], ankerInBeeld(ankerTijd, beeldStart, beeldEind)) ?: return true
                 ankerVast = true
                 toonRij(r)
                 geefFocus(nieuw)
@@ -547,18 +561,18 @@ fun GidsScherm(
                 fun volg(p: Programma) {
                     val s = max(0f, (p.start - rasterStart) / MIN.toFloat())
                     val e = min(totaalMin, (p.stop - rasterStart) / MIN.toFloat())
-                    val huidig = scrollMin()
-                    val zichtbaar = e > huidig + 15f && s < huidig + zichtbaarMin - 15f
-                    if (!zichtbaar) {
-                        beeldMin = rasterMin + (s - 15f).coerceIn(0f, maxScroll)
-                    } else if (s < huidig && e > huidig + zichtbaarMin) {
-                        // lang programma dat het hele scherm vult: laat staan
-                    } else if (s > huidig + zichtbaarMin - 45f) {
-                        beeldMin = rasterMin + (s - 30f).coerceIn(0f, maxScroll)
-                    }
+                    nieuweScroll(s, e, scrollMin(), zichtbaarMin, maxScroll)?.let { beeldMin = rasterMin + it }
                 }
+                LaunchedEffect(zichtbaarMin) { beeldBreedte = zichtbaarMin }
 
-                Column(Modifier.fillMaxSize().scrollable(veeg, Orientation.Horizontal)) {
+                Column(
+                    Modifier.fillMaxSize().scrollable(
+                        veeg,
+                        Orientation.Horizontal,
+                        overscrollEffect = null,
+                        bringIntoViewSpec = ZelfVolgen,
+                    )
+                ) {
                     // Tijdbalk
                     Row(Modifier.fillMaxWidth().height(TIJDBALK_HOOGTE)) {
                         // De dag aan de linkerrand van het beeld, zodat je bij het
