@@ -498,6 +498,25 @@ fun GidsScherm(
 
     BackHandler(enabled = verplaatst != null) { verplaatst = null }
 
+    // Terug naar het huidige uur. Op TV gaat de focus mee naar wat nu loopt
+    // op dezelfde zender; anders blijft die op de knop bovenaan hangen.
+    fun naarNu() {
+        val t = Klok.nu()
+        beeldMin = max(0f, (t - oorsprong) / MIN.toFloat() - 30f)
+        if (touch) return
+        ankerTijd = t
+        doelStart = 0L
+        herplaats = true
+        terugkeer++
+    }
+    // Of de rode lijn in beeld staat; dan heeft de knop "Nu" weinig zin.
+    val nuInBeeld by remember(nu, rasterStart) {
+        derivedStateOf {
+            val nuMin = (nu - rasterStart) / MIN.toFloat()
+            nuMin >= scrollMin() && nuMin <= scrollMin() + beeldBreedte
+        }
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compact = maxHeight < COMPACT_ONDER
         val zenderBreedte = if (compact) ZENDER_BREEDTE_COMPACT else ZENDER_BREEDTE
@@ -517,12 +536,8 @@ fun GidsScherm(
                     touch -> "Tip: hou een programma ingedrukt om die zender te verplaatsen of te verbergen."
                     else -> "Tip: hou OK ingedrukt om een zender te verplaatsen of te verbergen."
                 },
-                // Na het vegen snel terug naar het huidige uur (op TV volstaan de pijltjes).
-                onNu = if (touch) {
-                    { beeldMin = max(0f, (Klok.nu() - oorsprong) / MIN.toFloat() - 30f) }
-                } else {
-                    null
-                },
+                onNu = { naarNu() },
+                nuInBeeld = nuInBeeld,
                 onNaarRaster = {
                     val d = doel
                     if (d != null && perRij.any { d in it }) {
@@ -621,6 +636,42 @@ fun GidsScherm(
                                     }
                                 }
                             }
+                            // Label boven de rode lijn. Valt de lijn buiten beeld, dan
+                            // blijft het aan die rand staan met een pijl naar "nu".
+                            val nuMin = (nu - rasterStart) / MIN.toFloat()
+                            val nuKant by remember(nuMin, zichtbaarMin) {
+                                derivedStateOf {
+                                    val s = scrollGeanimeerd()
+                                    when {
+                                        nuMin < s -> -1
+                                        nuMin > s + zichtbaarMin -> 1
+                                        else -> 0
+                                    }
+                                }
+                            }
+                            Text(
+                                when (nuKant) {
+                                    -1 -> "← NU"
+                                    1 -> "NU →"
+                                    else -> "NU"
+                                },
+                                modifier = Modifier
+                                    .layout { measurable, constraints ->
+                                        val label = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+                                        layout(constraints.maxWidth, constraints.maxHeight) {
+                                            val lijnX = ((nuMin - scrollGeanimeerd()) * pxPerMin).roundToInt()
+                                            val x = (lijnX - label.width / 2).coerceIn(0, max(0, constraints.maxWidth - label.width))
+                                            label.place(x, (constraints.maxHeight - label.height) / 2)
+                                        }
+                                    }
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Kleuren.nuLijn)
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
                         }
                     }
 
@@ -883,7 +934,8 @@ private fun Kop(
     onNaarRaster: () -> Boolean,
     compact: Boolean,
     tip: String?,
-    onNu: (() -> Unit)?,
+    onNu: () -> Unit,
+    nuInBeeld: Boolean,
 ) {
     Row(
         Modifier
@@ -911,9 +963,7 @@ private fun Kop(
         } else {
             Spacer(Modifier.weight(1f))
         }
-        if (onNu != null) {
-            TvKnop("Nu") { onNu() }
-        }
+        TvKnop("Nu", gedimd = nuInBeeld) { onNu() }
         TvKnop(
             if (state.laden) "Bezig met laden" else "Vernieuwen",
             modifier = Modifier.focusRequester(focusKnop),
@@ -1204,6 +1254,8 @@ fun TvKnop(
     tekst: String,
     modifier: Modifier = Modifier,
     actief: Boolean = false,
+    // Blijft bruikbaar, maar valt minder op (bv. "Nu" terwijl je al bij nu staat).
+    gedimd: Boolean = false,
     onClick: () -> Unit,
 ) {
     var focus by remember { mutableStateOf(false) }
@@ -1211,6 +1263,7 @@ fun TvKnop(
     val achtergrond = when {
         focus -> Kleuren.focus
         actief -> Kleuren.actief
+        gedimd -> Kleuren.knop.copy(alpha = 0.45f)
         else -> Kleuren.knop
     }
     Box(
@@ -1234,7 +1287,11 @@ fun TvKnop(
     ) {
         Text(
             tekst,
-            color = if (focus) Kleuren.opFocus else Kleuren.tekst,
+            color = when {
+                focus -> Kleuren.opFocus
+                gedimd -> Kleuren.tekstZacht.copy(alpha = 0.7f)
+                else -> Kleuren.tekst
+            },
             fontSize = 15.sp,
             fontWeight = if (focus) FontWeight.SemiBold else FontWeight.Normal,
         )
